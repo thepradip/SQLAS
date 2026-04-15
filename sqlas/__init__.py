@@ -1,6 +1,6 @@
 """
 SQLAS — SQL Agent Scoring Framework
-A RAGAS-equivalent evaluation library for Text-to-SQL and SQL AI agents.
+Production-grade evaluation framework for Text-to-SQL and SQL AI agents.
 
 Author: Pradip Tivhale
 
