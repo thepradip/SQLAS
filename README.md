@@ -1,6 +1,18 @@
-# SQLAS — SQL Agent Scoring Framework
+<p align="center">
+  <img src="docs/sqlas_logo.png" alt="SQLAS Logo" width="280"/>
+</p>
 
-**Production-grade evaluation framework for Text-to-SQL and SQL AI agents. 20 metrics. 8 categories. Any LLM.**
+<h1 align="center">SQLAS — SQL Agent Scoring Framework</h1>
+
+<p align="center">
+  <strong>Production-grade evaluation framework for Text-to-SQL and SQL AI agents. 20 metrics. 8 categories. Any LLM.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/sqlas/"><img src="https://img.shields.io/pypi/v/sqlas?style=flat-square&color=orange" alt="PyPI"/></a>
+  <img src="https://img.shields.io/badge/python-3.10+-blue?style=flat-square" alt="Python"/>
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
+</p>
 
 SQLAS scores your SQL agent the way production demands — execution accuracy, semantic correctness, context quality, cost efficiency, safety, and more. Built on industry benchmarks (Spider, BIRD) and real-world observability patterns (Arize, MLflow).
 
