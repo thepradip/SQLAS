@@ -27,7 +27,7 @@ from sqlas.safety import safety_score, read_only_compliance
 from sqlas.context import context_precision, context_recall, entity_recall, noise_robustness
 from sqlas.runner import run_suite
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "Pradip Tivhale"
 
 __all__ = [
