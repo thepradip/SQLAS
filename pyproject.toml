@@ -7,7 +7,7 @@ name = "sqlas"
 version = "1.1.0"
 description = "SQLAS — SQL Agent Scoring Framework. Production-grade evaluation for Text-to-SQL and SQL AI agents. 20 metrics across 8 categories."
 readme = "README.md"
-license = "MIT"
+license = {text = "MIT"}
 authors = [{name = "Pradip Tivhale", email = "pradiptivhale@gmail.com"}]
 requires-python = ">=3.10"
 keywords = ["sql", "agent", "evaluation", "llm", "text-to-sql", "ragas", "mlflow", "benchmark", "monitoring"]
