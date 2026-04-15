@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/sqlas_logo.png" alt="SQLAS Logo" width="280"/>
+  <img src="assets/sqlas_logo.png" alt="SQLAS Logo" width="280"/>
 </p>
 
 <h1 align="center">SQLAS — SQL Agent Scoring Framework</h1>
