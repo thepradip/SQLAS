@@ -11,11 +11,7 @@
 
 <h1 align="center">SQL AI Agent</h1>
 
-<p align="center">
-  <strong>RAG-based Natural Language to SQL Agent powered by LangGraph, with SQLAS production evaluation.</strong>
-</p>
-
-Converts natural language questions into SQL queries, executes them safely, and returns narrated answers — all orchestrated as a LangGraph `StateGraph` with SQLAS quality gates at every stage.
+**SQL AI Agent** transforms natural language into production-safe SQL, executes it against any database, and returns narrated insights. A 7-node LangGraph pipeline with SQLAS quality gates scores every response across 20 metrics, blocks unsafe operations, and self-heals broken SQL. Zero config — point at any database and ask.
 
 **Author:** [Pradip Tivhale](https://github.com/thepradip)
 
