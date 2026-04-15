@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlas"
+version = "1.1.0"
+description = "SQLAS — SQL Agent Scoring Framework. A RAGAS-equivalent evaluation library for Text-to-SQL and SQL AI agents. 20 production-grade metrics across 8 categories."
+readme = "README.md"
+license = "MIT"
+authors = [{name = "Pradip Tivhale", email = "pradiptivhale@gmail.com"}]
+requires-python = ">=3.10"
+keywords = ["sql", "agent", "evaluation", "llm", "text-to-sql", "ragas", "mlflow", "benchmark", "monitoring"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "sqlglot>=20.0",
+]
+
+[project.optional-dependencies]
+mlflow = ["mlflow>=3.0"]
+dev = ["pytest>=7.0", "build", "twine"]
+all = ["mlflow>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/thepradip/SQLAS"
+Documentation = "https://github.com/thepradip/SQLAS#readme"
+Repository = "https://github.com/thepradip/SQLAS"
+Changelog = "https://github.com/thepradip/SQLAS/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["sqlas*"]
+
+[tool.setuptools.package-data]
+sqlas = ["py.typed"]
