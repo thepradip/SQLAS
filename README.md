@@ -286,18 +286,13 @@ def judge(prompt):
 
 ---
 
-## Example: SQL AI Agent (RAG-based)
+## Example: SQL AI Agent (LangGraph + SQLAS)
 
-A full-stack NL-to-SQL application is included in [`examples/sql-ai-agent/`](examples/sql-ai-agent/). It demonstrates:
+See [**thepradip/SQL-AI-Agent**](https://github.com/thepradip/SQL-AI-Agent) — a full-stack NL-to-SQL application powered by LangGraph that uses SQLAS for:
 
-- Dynamic schema introspection (any database, zero hardcoding)
-- RAG-like context injection (schema + column stats + sample rows into LLM prompt)
-- Read-only query execution with safety guards
-- React frontend with chat interface
-- MLflow tracing for full observability
-- SQLAS evaluation integration
-
-See the [example README](examples/sql-ai-agent/README.md) for setup instructions.
+- **Pre-execution safety gate** — `read_only_compliance`, `safety_score`, `schema_compliance` block unsafe queries
+- **Post-response quality scoring** — full `evaluate()` scores every query on 20 metrics
+- **Evaluation suite** — 25 test cases across 4 difficulty tiers scored by SQLAS
 
 ---
 
