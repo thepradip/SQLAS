@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/LangGraph-Agent-blueviolet?style=for-the-badge&logo=langchain&logoColor=white" alt="LangGraph"/>
+  <img src="https://img.shields.io/badge/SQLAS-Evaluation-orange?style=for-the-badge" alt="SQLAS"/>
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
+  <img src="https://img.shields.io/badge/React-Frontend-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React"/>
+</p>
+
 # SQL AI Agent
 
 **RAG-based Natural Language to SQL Agent powered by LangGraph, with SQLAS production evaluation.**
@@ -8,42 +15,260 @@ Converts natural language questions into SQL queries, executes them safely, and 
 
 ---
 
-## Architecture
+## System Architecture
 
 ```
-                    LangGraph StateGraph
-                    ====================
-
-User Question ──► [retrieve_schema]
-                        │
-                        ▼
-                  [generate_sql] ◄──────────────┐
-                        │                       │
-                        ▼                       │
-                  [validate_sql]          [handle_error]
-                  (SQLAS safety gate)           │
-                   ┌────┴────┐                  │
-                   │         │                  │
-                safe?     unsafe?               │
-                   │         │                  │
-                   ▼         ▼                  │
-            [execute_sql] [reject_unsafe]──►END │
-               ┌───┴───┐                       │
-               │       │                       │
-            success  failure ───────────────────┘
-               │                          (retry up to 2x)
-               ▼
-         [narrate_result]
-               │
-               ▼
-        [evaluate_quality]
-         (SQLAS scoring)
-               │
-               ▼
-              END
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │                         FRONTEND (React + Vite)                     │
+ │  ┌──────────┐  ┌────────────────┐  ┌──────────┐  ┌─────────────┐  │
+ │  │ Sidebar  │  │ ChatInterface  │  │ CodeBlock│  │  DataTable  │  │
+ │  │          │  │                │  │ (SQL)    │  │  (results)  │  │
+ │  │ - DB     │  │ - MessageBubble│  │ - Copy   │  │  - Sort     │  │
+ │  │   status │  │ - Metrics panel│  │ - Toggle │  │  - CSV      │  │
+ │  │ - Schema │  │ - Feedback     │  │          │  │    export   │  │
+ │  │ - Sample │  │   (thumbs)     │  └──────────┘  └─────────────┘  │
+ │  │   queries│  │ - SQLAS badges │                                  │
+ │  └──────────┘  └───────┬────────┘                                  │
+ └────────────────────────┼───────────────────────────────────────────┘
+                          │  HTTP (REST)
+                          ▼
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │                     BACKEND (FastAPI + LangGraph)                    │
+ │                                                                     │
+ │  ┌─── API Layer (main.py) ────────────────────────────────────────┐ │
+ │  │  POST /query   GET /health   GET /schema   POST /evaluate     │ │
+ │  └───────────────────────┬────────────────────────────────────────┘ │
+ │                          │                                          │
+ │  ┌─── LangGraph Agent (agent/) ──────────────────────────────────┐ │
+ │  │                                                                │ │
+ │  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐ │ │
+ │  │  │ retrieve_    │───►│ generate_    │───►│ validate_sql    │ │ │
+ │  │  │ schema       │    │ sql          │◄─┐ │ (SQLAS gate)    │ │ │
+ │  │  └──────────────┘    └──────────────┘  │ └───────┬──────────┘ │ │
+ │  │                                        │    safe │ unsafe     │ │
+ │  │                      ┌──────────────┐  │         ▼            │ │
+ │  │                      │ handle_error │──┘  ┌──────────────┐   │ │
+ │  │                      │ (retry 2x)   │◄──  │ execute_sql  │   │ │
+ │  │                      └──────────────┘  │  └──────┬───────┘   │ │
+ │  │                                        │         │           │ │
+ │  │  ┌──────────────────┐    ┌─────────────┴──┐      │           │ │
+ │  │  │ evaluate_quality │◄───│ narrate_result │◄─────┘           │ │
+ │  │  │ (SQLAS scoring)  │    └────────────────┘                  │ │
+ │  │  └──────────────────┘                                        │ │
+ │  └────────────────────────────────────────────────────────────────┘ │
+ │                          │                                          │
+ │  ┌─── Database Layer (database.py) ──────────────────────────────┐ │
+ │  │  SQLAlchemy Async Engine  │  Dynamic Schema Introspection     │ │
+ │  │  Read-only Execution      │  Column Stats + Sample Rows       │ │
+ │  └───────────────────────────┼───────────────────────────────────┘ │
+ └──────────────────────────────┼─────────────────────────────────────┘
+                                ▼
+                 ┌──────────────────────────┐
+                 │   ANY SQL DATABASE       │
+                 │                          │
+                 │  SQLite  │  PostgreSQL   │
+                 │  MySQL   │  SQL Server   │
+                 │  Oracle  │  ...          │
+                 └──────────────────────────┘
 ```
 
-### SQLAS Integration Points
+---
+
+## LangGraph Pipeline (Detail)
+
+7 nodes, 3 conditional edges, self-healing retry loop:
+
+```
+                        ┌─────────────────────────────────────────┐
+                        │           AgentState (TypedDict)         │
+                        │                                         │
+                        │  question, conversation_history,        │
+                        │  schema_context, generated_sql,         │
+                        │  is_safe, safety_details,               │
+                        │  execution_result, execution_error,     │
+                        │  response, sqlas_scores,                │
+                        │  retry_count, metrics, success          │
+                        └───────────────┬─────────────────────────┘
+                                        │
+                        START ──► retrieve_schema
+                                        │
+                             schema_context populated
+                                        │
+                                        ▼
+                                  generate_sql ◄────────────────┐
+                                        │                       │
+                             generated_sql populated             │
+                                        │                       │
+                                        ▼                       │
+                                  validate_sql                  │
+                              ┌─── SQLAS Safety Gate ───┐       │
+                              │                         │       │
+                              │  read_only_compliance   │       │
+                              │  safety_score           │       │
+                              │  schema_compliance      │       │
+                              └────────┬────────────────┘       │
+                                  ┌────┴────┐                   │
+                               safe?     unsafe?                │
+                                  │         │                   │
+                                  ▼         ▼                   │
+                           execute_sql   reject_unsafe ──► END  │
+                              ┌───┴───┐                         │
+                           success  failure                     │
+                              │         │                       │
+                              │         ▼                       │
+                              │    handle_error                 │
+                              │    retry_count++                │
+                              │      ┌───┴───┐                  │
+                              │   < max?   >= max?              │
+                              │      │         │                │
+                              │      │    fail_after_retries    │
+                              │      │         │                │
+                              │      └─────────┼──► END         │
+                              │                │                │
+                              │      ┌─────────┘                │
+                              │      └──────────────────────────┘
+                              ▼
+                        narrate_result
+                              │
+                        response populated
+                              │
+                              ▼
+                       evaluate_quality
+                     ┌─── SQLAS Scoring ────┐
+                     │                      │
+                     │  execution_accuracy   │
+                     │  semantic_equivalence │
+                     │  faithfulness         │
+                     │  answer_relevance     │
+                     │  safety_score         │
+                     │  read_only_compliance │
+                     │  overall_score        │
+                     └──────────┬───────────┘
+                                │
+                               END
+```
+
+---
+
+## Backend (Detail)
+
+```
+backend/
+├── main.py                    FastAPI application
+│   ├── POST /query            NL → LangGraph pipeline → response + SQLAS scores
+│   ├── GET  /health           DB connection status + table list
+│   ├── GET  /schema           Full auto-discovered schema context
+│   ├── POST /evaluate         Run 25-case SQLAS evaluation suite
+│   └── DELETE /conversations  Clear conversation history
+│
+├── agent/                     LangGraph agent package
+│   ├── __init__.py            Exports: build_graph, run_query
+│   ├── state.py               AgentState TypedDict (14 fields)
+│   ├── nodes.py               7 node functions + SQLAS integration
+│   │   ├── retrieve_schema    Inject cached DB context
+│   │   ├── generate_sql       LLM generates SQL (or retry with error)
+│   │   ├── validate_sql       SQLAS safety gate (3 checks)
+│   │   ├── execute_sql        Read-only query via SQLAlchemy
+│   │   ├── handle_error       Increment retry counter
+│   │   ├── narrate_result     LLM summarizes results in NL
+│   │   ├── evaluate_quality   SQLAS 20-metric scoring
+│   │   ├── reject_unsafe      Terminal: safety rejection
+│   │   └── fail_after_retries Terminal: max retries exceeded
+│   └── graph.py               StateGraph definition + conditional edges
+│       ├── route_after_validation   safe → execute | unsafe → reject
+│       ├── route_after_execution    success → narrate | failure → retry
+│       └── route_after_error        retry < max → generate | else → fail
+│
+├── config.py                  Pydantic Settings from .env
+│   ├── AZURE_OPENAI_*         LLM configuration
+│   ├── DATABASE_URL           Any SQLAlchemy async URL
+│   ├── PII_COLUMNS            For SQLAS safety scoring
+│   └── DOMAIN_HINT            Optional context for LLM
+│
+├── database.py                Database layer (any SQL DB)
+│   ├── get_full_schema()      Introspect: tables, columns, PKs, FKs, indexes
+│   ├── get_column_stats()     Per-column: min/max/avg/distinct/nulls/top values
+│   ├── get_sample_rows()      Sample data for LLM context
+│   ├── build_full_context()   Assemble complete RAG context string
+│   └── execute_readonly_query() Strictly read-only with forbidden keyword guard
+│
+├── models.py                  Pydantic request/response models
+│   ├── QueryRequest           { query, conversation_id }
+│   ├── QueryResponse          { sql, data, response, sqlas_scores, metrics }
+│   └── SQLASScoresResponse    { overall_score, execution_accuracy, ... }
+│
+├── eval_runner.py             SQLAS evaluation suite
+│   ├── 25 TestCase definitions (easy/medium/hard/extra_hard)
+│   └── run_evaluation()       Run agent + sqlas.evaluate() per case
+│
+├── ingest.py                  CSV → SQLite ingestion script
+│   ├── health_demographics    2,000 rows, 14 columns, 6 indexes
+│   └── physical_activity      multi-day activity logs, FK to demographics
+│
+└── requirements.txt           Dependencies
+    ├── langgraph >= 0.2.0     Agent orchestration
+    ├── sqlas >= 1.1.0         Evaluation framework (pip install sqlas)
+    ├── fastapi                REST API
+    ├── sqlalchemy + aiosqlite Async database
+    └── openai                 Azure OpenAI LLM
+```
+
+---
+
+## Frontend (Detail)
+
+```
+frontend/                      React + Vite + Tailwind CSS
+├── src/
+│   ├── App.jsx                Root — manages state, API calls
+│   │   ├── sendQuery()        POST /query → update messages
+│   │   ├── sendFeedback()     POST /feedback → thumbs up/down
+│   │   └── clearChat()        DELETE /conversations
+│   │
+│   ├── components/
+│   │   ├── Sidebar.jsx        Left panel
+│   │   │   ├── DB status      Connection indicator, table list
+│   │   │   ├── Schema explorer Collapsible full schema view
+│   │   │   ├── Sample queries  8 clickable example questions
+│   │   │   └── Clear button    Reset conversation
+│   │   │
+│   │   ├── ChatInterface.jsx  Main chat area
+│   │   │   ├── Empty state     Welcome message + prompt
+│   │   │   ├── Message list    Scrollable conversation
+│   │   │   ├── Loading spinner "Generating SQL and analyzing..."
+│   │   │   └── Input bar       Text input + send button
+│   │   │
+│   │   ├── MessageBubble.jsx  Individual message
+│   │   │   ├── User bubble     Simple text with avatar
+│   │   │   ├── Agent bubble    Response + status badges
+│   │   │   ├── Metrics panel   Latency, row count, query type, SQL features
+│   │   │   ├── Feedback        Thumbs up/down + comment box
+│   │   │   └── SQLAS badges    Overall score, safety, accuracy
+│   │   │
+│   │   ├── CodeBlock.jsx      SQL display
+│   │   │   ├── Collapsible     Toggle SQL visibility
+│   │   │   ├── Syntax highlight Indigo-themed monospace
+│   │   │   └── Copy button     One-click clipboard
+│   │   │
+│   │   └── DataTable.jsx      Query results
+│   │       ├── Sortable table   Sticky headers, zebra rows
+│   │       ├── Type-aware       Numeric right-aligned, text left
+│   │       ├── Row counter      # column with index
+│   │       ├── CSV export       One-click download
+│   │       └── Truncation       "showing first 500" indicator
+│   │
+│   ├── index.css              Tailwind base + custom scrollbar
+│   └── main.jsx               React entry point
+│
+├── index.html                 HTML shell
+├── vite.config.js             Dev server + API proxy to :8000
+├── tailwind.config.js         Dark theme configuration
+└── package.json               Dependencies (react, lucide-react, react-markdown)
+```
+
+---
+
+## SQLAS Integration Points
 
 | Stage | SQLAS Metric | Purpose |
 |-------|-------------|---------|
@@ -52,25 +277,13 @@ User Question ──► [retrieve_schema]
 | | `schema_compliance` | Validates tables/columns exist |
 | **Post-response scoring** | `evaluate()` | Full 20-metric production score |
 | **Evaluation suite** | `run_suite()` | Batch evaluation with 25 test cases |
-
----
-
-## Features
-
-- **LangGraph orchestration** — proper `StateGraph` with conditional edges, self-healing retry loops, and safety gates
-- **SQLAS evaluation** — production-grade scoring at validation and response stages via [`sqlas`](https://github.com/thepradip/SQLAS)
-- **Zero-config schema discovery** — auto-introspects tables, columns, PKs, FKs, indexes, column stats, sample rows
-- **Scales to 100s of tables** — dynamic introspection, no hardcoded schema
-- **Multiple database backends** — SQLite, PostgreSQL, MySQL, SQL Server, Oracle (any SQLAlchemy URL)
-- **Strictly read-only** — enforced at SQL parsing, SQLAS validation, and execution layers
-- **Self-healing SQL** — automatic retry with error feedback through LangGraph loop
-- **React chat UI** — conversational interface with syntax-highlighted SQL and data tables
+| **API response** | `SQLASScoresResponse` | Every query returns quality scores |
 
 ---
 
 ## Quick Start
 
-### 1. Clone & configure
+### 1. Clone
 
 ```bash
 git clone https://github.com/thepradip/SQL-AI-Agent.git
@@ -127,15 +340,30 @@ Every `/query` response includes SQLAS scores:
 
 ```json
 {
-  "sql": "SELECT COUNT(*) FROM users WHERE active = 1",
-  "data": { "columns": ["COUNT(*)"], "rows": [[1523]], "row_count": 1 },
-  "response": "There are 1,523 active users.",
+  "sql": "SELECT COUNT(*) FROM health_demographics WHERE Blood_Pressure_Abnormality = 1",
+  "data": {
+    "columns": ["abnormal_blood_pressure_count"],
+    "rows": [[987]],
+    "row_count": 1,
+    "execution_time_ms": 1.61
+  },
+  "response": "987 patients have abnormal blood pressure.",
   "success": true,
+  "metrics": {
+    "generation_latency_ms": 3947,
+    "sql_execution_ms": 1.61,
+    "narration_latency_ms": 3188,
+    "total_latency_ms": 34535,
+    "sqlas_overall": 0.9575
+  },
   "sqlas_scores": {
-    "overall_score": 0.92,
+    "overall_score": 0.9575,
     "execution_accuracy": 1.0,
-    "faithfulness": 0.95,
-    "safety_score": 1.0
+    "semantic_equivalence": 0.8,
+    "faithfulness": 1.0,
+    "answer_relevance": 1.0,
+    "safety_score": 1.0,
+    "read_only_compliance": 1.0
   }
 }
 ```
@@ -144,33 +372,39 @@ Every `/query` response includes SQLAS scores:
 
 ## Connecting Your Own Database
 
-1. Set `DATABASE_URL` in `.env` to your database connection string
+```env
+# SQLite (default)
+DATABASE_URL=sqlite+aiosqlite:///./health.db
+
+# PostgreSQL
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
+
+# MySQL
+DATABASE_URL=mysql+aiomysql://user:pass@host:3306/dbname
+```
+
+1. Set `DATABASE_URL` in `.env`
 2. Restart the backend — schema is auto-discovered at startup
 3. Optionally set `DOMAIN_HINT` for better LLM context
 4. Optionally set `PII_COLUMNS` for SQLAS safety scoring
 
-No code changes needed. The agent introspects all tables and generates context automatically.
+No code changes needed. Works with 100s of tables across any database.
 
 ---
 
 ## Evaluation
 
-Run the built-in SQLAS evaluation suite:
+Run the built-in SQLAS evaluation suite (25 test cases, 4 difficulty tiers):
 
 ```bash
 # Quick mode (5 test cases)
 curl -X POST "http://localhost:8000/evaluate?quick=true"
 
-# Full suite (25 test cases across 4 difficulty tiers)
+# Full suite
 curl -X POST "http://localhost:8000/evaluate?quick=false"
-```
 
-Or from Python:
-
-```bash
-cd backend
-python eval_runner.py          # full suite
-python eval_runner.py --quick  # quick mode
+# Or from CLI
+cd backend && python eval_runner.py --quick
 ```
 
 ---
@@ -179,11 +413,12 @@ python eval_runner.py --quick  # quick mode
 
 | Layer | Technology |
 |-------|-----------|
-| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| Evaluation | [SQLAS](https://github.com/thepradip/SQLAS) |
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` |
+| Evaluation | [SQLAS](https://github.com/thepradip/SQLAS) — 20 metrics, 8 categories |
 | LLM | Azure OpenAI (configurable) |
 | Backend | FastAPI + SQLAlchemy (async) |
-| Frontend | React + Vite + Tailwind CSS |
+| Frontend | React 18 + Vite + Tailwind CSS |
+| UI components | lucide-react + react-markdown |
 | Database | Any SQLAlchemy-compatible DB |
 
 ---
