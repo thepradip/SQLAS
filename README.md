@@ -23,6 +23,10 @@ Converts natural language questions into SQL queries, executes them safely, and 
 
 ## System Architecture
 
+<p align="center">
+  <img src="assets/architecture.png" alt="System Architecture" width="100%"/>
+</p>
+
 | Layer | Components | Responsibility |
 |-------|-----------|----------------|
 | **Frontend** | Chat UI, SQL Viewer, Data Tables, Metrics Panel | React + Vite + Tailwind CSS |
