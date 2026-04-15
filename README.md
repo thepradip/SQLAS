@@ -1,13 +1,19 @@
 <p align="center">
+  <img src="docs/sqlas_logo.png" alt="SQLAS Logo" width="240"/>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/LangGraph-Agent-blueviolet?style=for-the-badge&logo=langchain&logoColor=white" alt="LangGraph"/>
   <img src="https://img.shields.io/badge/SQLAS-Evaluation-orange?style=for-the-badge" alt="SQLAS"/>
   <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
   <img src="https://img.shields.io/badge/React-Frontend-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React"/>
 </p>
 
-# SQL AI Agent
+<h1 align="center">SQL AI Agent</h1>
 
-**RAG-based Natural Language to SQL Agent powered by LangGraph, with SQLAS production evaluation.**
+<p align="center">
+  <strong>RAG-based Natural Language to SQL Agent powered by LangGraph, with SQLAS production evaluation.</strong>
+</p>
 
 Converts natural language questions into SQL queries, executes them safely, and returns narrated answers — all orchestrated as a LangGraph `StateGraph` with SQLAS quality gates at every stage.
 
@@ -29,12 +35,6 @@ Converts natural language questions into SQL queries, executes them safely, and 
 | **Backend & API Gateway** | FastAPI, Schema Introspection, Metrics Engine | REST API orchestration, JSON request handling |
 | **Core LangGraph Pipeline** | 7 nodes: retrieve_schema -> generate_sql -> validate_sql -> execute_sql -> narrate_result -> evaluate_quality | Agent orchestration with SQLAS safety gates and self-healing retry |
 | **Infrastructure** | Azure OpenAI, SQLite/PostgreSQL/MySQL, SQLAS | LLM reasoning, data storage, production evaluation |
-
-<p align="center">
-  <img src="docs/architecture/sql_archi.png" alt="Request Lifecycle Flowchart" width="70%"/>
-</p>
-
-<p align="center"><em>Simplified request lifecycle: User -> React -> FastAPI -> LangGraph Pipeline -> Database -> Response</em></p>
 
 > Full documentation: [`docs/agent/DOCUMENTATION.pdf`](docs/agent/DOCUMENTATION.pdf) (13 sections, 30+ pages)
 
@@ -117,10 +117,6 @@ Converts natural language questions into SQL queries, executes them safely, and 
 ---
 
 ## Backend (Detail)
-
-<p align="center">
-  <img src="docs/architecture/arc1.png" alt="Detailed Backend Architecture" width="100%"/>
-</p>
 
 ```
 backend/

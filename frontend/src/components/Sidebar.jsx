@@ -3,7 +3,6 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
-  Zap,
   Table,
   Shield,
 } from "lucide-react";
@@ -32,13 +31,11 @@ export default function Sidebar({
       {/* Header */}
       <div className="p-5 border-b border-gray-800">
         <div className="flex items-center gap-2.5 mb-1">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <Zap size={18} className="text-white" />
-          </div>
+          <img src="/sqlas_logo.png" alt="SQLAS" className="w-9 h-9 object-contain" />
           <h1 className="text-lg font-semibold text-white">SQL AI Agent</h1>
         </div>
-        <p className="text-xs text-gray-500 mt-1.5 ml-[42px]">
-          Natural language to SQL
+        <p className="text-xs text-gray-500 mt-1.5 ml-[46px]">
+          Powered by SQLAS
         </p>
       </div>
 
