@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/sqlas_logo.png" alt="SQLAS Logo" width="240"/>
+  <img src="assets/sqlas_logo.png" alt="SQLAS Logo" width="240"/>
 </p>
 
 <p align="center">
@@ -23,96 +23,12 @@ Converts natural language questions into SQL queries, executes them safely, and 
 
 ## System Architecture
 
-<p align="center">
-  <img src="docs/architecture/arc2.png" alt="Architectural Blueprint: LLM-Driven SQL Analytics Pipeline" width="100%"/>
-</p>
-
-<p align="center"><em>Architectural Blueprint — 4 layers: Frontend, Backend & API Gateway, Core LangGraph Pipeline, Infrastructure</em></p>
-
 | Layer | Components | Responsibility |
 |-------|-----------|----------------|
-| **Frontend** | Chat UI, SQL Viewer, Data Tables, Metrics Panel | User-facing interface (React + Vite + Tailwind CSS) |
-| **Backend & API Gateway** | FastAPI, Schema Introspection, Metrics Engine | REST API orchestration, JSON request handling |
-| **Core LangGraph Pipeline** | 7 nodes: retrieve_schema -> generate_sql -> validate_sql -> execute_sql -> narrate_result -> evaluate_quality | Agent orchestration with SQLAS safety gates and self-healing retry |
-| **Infrastructure** | Azure OpenAI, SQLite/PostgreSQL/MySQL, SQLAS | LLM reasoning, data storage, production evaluation |
-
-> Full documentation: [`docs/agent/DOCUMENTATION.pdf`](docs/agent/DOCUMENTATION.pdf) (13 sections, 30+ pages)
-
----
-
-## LangGraph Pipeline (Detail)
-
-7 nodes, 3 conditional edges, self-healing retry loop:
-
-```
-                        ┌─────────────────────────────────────────┐
-                        │           AgentState (TypedDict)         │
-                        │                                         │
-                        │  question, conversation_history,        │
-                        │  schema_context, generated_sql,         │
-                        │  is_safe, safety_details,               │
-                        │  execution_result, execution_error,     │
-                        │  response, sqlas_scores,                │
-                        │  retry_count, metrics, success          │
-                        └───────────────┬─────────────────────────┘
-                                        │
-                        START ──► retrieve_schema
-                                        │
-                             schema_context populated
-                                        │
-                                        ▼
-                                  generate_sql ◄────────────────┐
-                                        │                       │
-                             generated_sql populated             │
-                                        │                       │
-                                        ▼                       │
-                                  validate_sql                  │
-                              ┌─── SQLAS Safety Gate ───┐       │
-                              │                         │       │
-                              │  read_only_compliance   │       │
-                              │  safety_score           │       │
-                              │  schema_compliance      │       │
-                              └────────┬────────────────┘       │
-                                  ┌────┴────┐                   │
-                               safe?     unsafe?                │
-                                  │         │                   │
-                                  ▼         ▼                   │
-                           execute_sql   reject_unsafe ──► END  │
-                              ┌───┴───┐                         │
-                           success  failure                     │
-                              │         │                       │
-                              │         ▼                       │
-                              │    handle_error                 │
-                              │    retry_count++                │
-                              │      ┌───┴───┐                  │
-                              │   < max?   >= max?              │
-                              │      │         │                │
-                              │      │    fail_after_retries    │
-                              │      │         │                │
-                              │      └─────────┼──► END         │
-                              │                │                │
-                              │      ┌─────────┘                │
-                              │      └──────────────────────────┘
-                              ▼
-                        narrate_result
-                              │
-                        response populated
-                              │
-                              ▼
-                       evaluate_quality
-                     ┌─── SQLAS Scoring ────┐
-                     │                      │
-                     │  execution_accuracy   │
-                     │  semantic_equivalence │
-                     │  faithfulness         │
-                     │  answer_relevance     │
-                     │  safety_score         │
-                     │  read_only_compliance │
-                     │  overall_score        │
-                     └──────────┬───────────┘
-                                │
-                               END
-```
+| **Frontend** | Chat UI, SQL Viewer, Data Tables, Metrics Panel | React + Vite + Tailwind CSS |
+| **Backend & API** | FastAPI, Schema Introspection, LangGraph Agent | REST API, 7-node pipeline with SQLAS gates |
+| **Evaluation** | SQLAS safety gate + post-response scoring | 20 metrics, read-only enforcement, quality scores |
+| **Infrastructure** | Azure OpenAI, SQLite/PostgreSQL/MySQL | LLM reasoning, any SQL database |
 
 ---
 
