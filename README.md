@@ -1,8 +1,8 @@
 # SQLAS — SQL Agent Scoring Framework
 
-**A RAGAS-equivalent evaluation library for Text-to-SQL and SQL AI agents.**
+**Production-grade evaluation framework for Text-to-SQL and SQL AI agents. 20 metrics. 8 categories. Any LLM.**
 
-SQLAS evaluates SQL agents across **20 production metrics** in **8 categories**, aligned with industry best practices (Spider, BIRD, Arize, MLflow).
+SQLAS scores your SQL agent the way production demands — execution accuracy, semantic correctness, context quality, cost efficiency, safety, and more. Built on industry benchmarks (Spider, BIRD) and real-world observability patterns (Arize, MLflow).
 
 **Author:** [Pradip Tivhale](https://github.com/thepradip)
 
@@ -229,9 +229,9 @@ recall, details = context_recall(
 
 ---
 
-## RAGAS Mapping
+## Metric Mapping (vs. RAG Evaluation Standards)
 
-| RAGAS Metric | SQLAS Equivalent | Description |
+| Standard Metric | SQLAS Equivalent | Description |
 |---|---|---|
 | Faithfulness | `faithfulness` | Claims grounded in SQL result data |
 | Answer Relevance | `answer_relevance` | Response answers the question |
