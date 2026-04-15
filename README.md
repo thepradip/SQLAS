@@ -75,8 +75,6 @@ User Question ──► [retrieve_schema]
 ```bash
 git clone https://github.com/thepradip/SQL-AI-Agent.git
 cd SQL-AI-Agent
-cp .env.example .env
-# Edit .env with your Azure OpenAI credentials and database URL
 ```
 
 ### 2. Backend
@@ -87,7 +85,11 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Ingest sample health data (optional, for demo)
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your Azure OpenAI credentials
+
+# Ingest sample health data into SQLite (required for demo)
 python ingest.py
 
 # Start the API

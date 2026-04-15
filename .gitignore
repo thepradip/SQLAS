@@ -30,6 +30,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Database (regenerate via: python ingest.py)
+*.db
+
 # Pytest
 .pytest_cache/
 

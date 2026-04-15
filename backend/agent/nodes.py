@@ -34,8 +34,6 @@ client = AzureOpenAI(
     api_version=settings.azure_openai_api_version,
 )
 
-DB_PATH = str(Path(__file__).resolve().parent.parent / "health.db")
-
 # ─── Cached schema metadata (populated on startup) ────────────────────────────
 
 _schema_context: str = ""

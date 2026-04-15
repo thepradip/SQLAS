@@ -4,8 +4,11 @@ from __future__ import annotations
 Author: Pradip Tivhale
 """
 
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+_BACKEND_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
@@ -35,7 +38,7 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
 
     class Config:
-        env_file = ".env"
+        env_file = str(_BACKEND_DIR / ".env")
         env_file_encoding = "utf-8"
         extra = "ignore"
 
