@@ -17,60 +17,26 @@ Converts natural language questions into SQL queries, executes them safely, and 
 
 ## System Architecture
 
-```
- ┌─────────────────────────────────────────────────────────────────────┐
- │                         FRONTEND (React + Vite)                     │
- │  ┌──────────┐  ┌────────────────┐  ┌──────────┐  ┌─────────────┐  │
- │  │ Sidebar  │  │ ChatInterface  │  │ CodeBlock│  │  DataTable  │  │
- │  │          │  │                │  │ (SQL)    │  │  (results)  │  │
- │  │ - DB     │  │ - MessageBubble│  │ - Copy   │  │  - Sort     │  │
- │  │   status │  │ - Metrics panel│  │ - Toggle │  │  - CSV      │  │
- │  │ - Schema │  │ - Feedback     │  │          │  │    export   │  │
- │  │ - Sample │  │   (thumbs)     │  └──────────┘  └─────────────┘  │
- │  │   queries│  │ - SQLAS badges │                                  │
- │  └──────────┘  └───────┬────────┘                                  │
- └────────────────────────┼───────────────────────────────────────────┘
-                          │  HTTP (REST)
-                          ▼
- ┌─────────────────────────────────────────────────────────────────────┐
- │                     BACKEND (FastAPI + LangGraph)                    │
- │                                                                     │
- │  ┌─── API Layer (main.py) ────────────────────────────────────────┐ │
- │  │  POST /query   GET /health   GET /schema   POST /evaluate     │ │
- │  └───────────────────────┬────────────────────────────────────────┘ │
- │                          │                                          │
- │  ┌─── LangGraph Agent (agent/) ──────────────────────────────────┐ │
- │  │                                                                │ │
- │  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐ │ │
- │  │  │ retrieve_    │───►│ generate_    │───►│ validate_sql    │ │ │
- │  │  │ schema       │    │ sql          │◄─┐ │ (SQLAS gate)    │ │ │
- │  │  └──────────────┘    └──────────────┘  │ └───────┬──────────┘ │ │
- │  │                                        │    safe │ unsafe     │ │
- │  │                      ┌──────────────┐  │         ▼            │ │
- │  │                      │ handle_error │──┘  ┌──────────────┐   │ │
- │  │                      │ (retry 2x)   │◄──  │ execute_sql  │   │ │
- │  │                      └──────────────┘  │  └──────┬───────┘   │ │
- │  │                                        │         │           │ │
- │  │  ┌──────────────────┐    ┌─────────────┴──┐      │           │ │
- │  │  │ evaluate_quality │◄───│ narrate_result │◄─────┘           │ │
- │  │  │ (SQLAS scoring)  │    └────────────────┘                  │ │
- │  │  └──────────────────┘                                        │ │
- │  └────────────────────────────────────────────────────────────────┘ │
- │                          │                                          │
- │  ┌─── Database Layer (database.py) ──────────────────────────────┐ │
- │  │  SQLAlchemy Async Engine  │  Dynamic Schema Introspection     │ │
- │  │  Read-only Execution      │  Column Stats + Sample Rows       │ │
- │  └───────────────────────────┼───────────────────────────────────┘ │
- └──────────────────────────────┼─────────────────────────────────────┘
-                                ▼
-                 ┌──────────────────────────┐
-                 │   ANY SQL DATABASE       │
-                 │                          │
-                 │  SQLite  │  PostgreSQL   │
-                 │  MySQL   │  SQL Server   │
-                 │  Oracle  │  ...          │
-                 └──────────────────────────┘
-```
+<p align="center">
+  <img src="docs/architecture/arc2.png" alt="Architectural Blueprint: LLM-Driven SQL Analytics Pipeline" width="100%"/>
+</p>
+
+<p align="center"><em>Architectural Blueprint — 4 layers: Frontend, Backend & API Gateway, Core LangGraph Pipeline, Infrastructure</em></p>
+
+| Layer | Components | Responsibility |
+|-------|-----------|----------------|
+| **Frontend** | Chat UI, SQL Viewer, Data Tables, Metrics Panel | User-facing interface (React + Vite + Tailwind CSS) |
+| **Backend & API Gateway** | FastAPI, Schema Introspection, Metrics Engine | REST API orchestration, JSON request handling |
+| **Core LangGraph Pipeline** | 7 nodes: retrieve_schema -> generate_sql -> validate_sql -> execute_sql -> narrate_result -> evaluate_quality | Agent orchestration with SQLAS safety gates and self-healing retry |
+| **Infrastructure** | Azure OpenAI, SQLite/PostgreSQL/MySQL, SQLAS | LLM reasoning, data storage, production evaluation |
+
+<p align="center">
+  <img src="docs/architecture/sql_archi.png" alt="Request Lifecycle Flowchart" width="70%"/>
+</p>
+
+<p align="center"><em>Simplified request lifecycle: User -> React -> FastAPI -> LangGraph Pipeline -> Database -> Response</em></p>
+
+> Full documentation: [`docs/agent/DOCUMENTATION.pdf`](docs/agent/DOCUMENTATION.pdf) (13 sections, 30+ pages)
 
 ---
 
@@ -151,6 +117,10 @@ Converts natural language questions into SQL queries, executes them safely, and 
 ---
 
 ## Backend (Detail)
+
+<p align="center">
+  <img src="docs/architecture/arc1.png" alt="Detailed Backend Architecture" width="100%"/>
+</p>
 
 ```
 backend/
