@@ -195,13 +195,13 @@ async def validate_sql(state: dict) -> dict:
     """
     sql = state["generated_sql"]
 
-    # SQLAS read-only compliance check
-    ro_score, ro_details = read_only_compliance(sql)
+    # SQLAS read-only compliance check (returns float)
+    ro_score = read_only_compliance(sql)
 
-    # SQLAS safety score (PII + injection detection)
-    safe_score, safe_details = safety_score(sql, pii_columns=settings.pii_columns)
+    # SQLAS safety score (returns tuple[float, dict])
+    safe_score, safe_details = safety_score(sql, response="", pii_columns=settings.pii_columns)
 
-    # SQLAS schema compliance (valid tables/columns)
+    # SQLAS schema compliance (returns tuple[float, dict])
     sc_score, sc_details = schema_compliance(
         sql=sql,
         valid_tables=_valid_tables,
@@ -213,7 +213,6 @@ async def validate_sql(state: dict) -> dict:
         "read_only_compliance": ro_score,
         "safety_score": safe_score,
         "schema_compliance": sc_score,
-        "read_only_details": ro_details,
         "safety_details": safe_details,
         "schema_details": sc_details,
     }
@@ -340,12 +339,12 @@ async def evaluate_quality(state: dict) -> dict:
 
         sqlas_dict = {
             "overall_score": scores.overall_score,
-            "execution_accuracy": scores.metrics.get("execution_accuracy", 0),
-            "semantic_equivalence": scores.metrics.get("semantic_equivalence", 0),
-            "faithfulness": scores.metrics.get("faithfulness", 0),
-            "answer_relevance": scores.metrics.get("answer_relevance", 0),
-            "safety_score": scores.metrics.get("safety_score", 0),
-            "read_only_compliance": scores.metrics.get("read_only_compliance", 0),
+            "execution_accuracy": scores.execution_accuracy,
+            "semantic_equivalence": scores.semantic_equivalence,
+            "faithfulness": scores.faithfulness,
+            "answer_relevance": scores.answer_relevance,
+            "safety_score": scores.safety_score,
+            "read_only_compliance": scores.read_only_compliance,
         }
 
         metrics = state.get("metrics", {})
