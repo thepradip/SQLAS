@@ -55,19 +55,26 @@ def chart_data_alignment(visualization: dict | None, result_data: dict | None) -
     if not visualization or not result_data:
         return 0.0, {"issues": ["missing_visualization_or_result_data"]}
 
-    columns = {col.lower() for col in result_data.get("columns", [])}
+    columns = {str(col).lower() for col in result_data.get("columns", [])}
     issues = []
 
     for key_name in ("label_key", "value_key", "x_key", "y_key"):
         key = visualization.get(key_name)
-        if key and key.lower() not in columns and not key.lower().endswith(("_count", "_sum", "_avg")):
+        if key and not _is_aligned_key(str(key), columns):
             issues.append(f"{key_name}_not_in_result:{key}")
 
     records = visualization.get("records") or []
     if records:
-        record_keys = {key.lower() for key in records[0].keys()}
+        record_keys = {str(key).lower() for key in records[0].keys()}
         if not record_keys.intersection(columns):
             issues.append("records_do_not_overlap_result_columns")
+
+    labels = visualization.get("labels") or []
+    values = visualization.get("values") or []
+    if visualization.get("type") in CHART_TYPES_REQUIRING_SERIES and labels and values:
+        result_records = _normalize_result_records(result_data)
+        if len(labels) > max(len(result_records), 1) and "duplicate_labels_aggregated" not in (visualization.get("warnings") or []):
+            issues.append("chart_has_more_points_than_result")
 
     score = max(0.0, 1.0 - 0.25 * len(issues))
     return score, {"issues": issues or ["none"]}
@@ -169,3 +176,29 @@ def _build_result_preview(result_data: dict | None) -> str:
     if row_count is not None:
         preview += f"Row count: {row_count}\n"
     return preview
+
+
+def _is_aligned_key(key: str, columns: set[str]) -> bool:
+    lowered = key.lower()
+    if lowered in columns:
+        return True
+    for suffix in ("_count", "_sum", "_avg", "_min", "_max"):
+        if lowered.endswith(suffix) and lowered.removesuffix(suffix) in columns:
+            return True
+    return False
+
+
+def _normalize_result_records(result_data: dict | None) -> list[dict]:
+    if not result_data:
+        return []
+    columns = result_data.get("columns") or []
+    records = []
+    for row in result_data.get("rows") or []:
+        if isinstance(row, dict):
+            records.append(row)
+        elif isinstance(row, (list, tuple)):
+            records.append({
+                column: row[index] if index < len(row) else None
+                for index, column in enumerate(columns)
+            })
+    return records

@@ -1,3 +1,9 @@
+# Environment and secrets
+.env
+.env.*
+TestPyPI-Recovery-Codes*
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -6,7 +12,22 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+venv/
+.venv/
+*.egg
 *.whl
 *.tar.gz
+
+# Logs and runtime output
+*.log
+mlruns/
+
+# Generated docs/artifacts
 *.pdf
+
+# OS/editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
