@@ -1,9 +1,6 @@
-from __future__ import annotations
 """
 Data ingestion script — loads CSVs into SQLite with proper schema and indexes.
 Run once: python ingest.py
-
-Author: Pradip Tivhale
 """
 
 import sqlite3
@@ -66,6 +63,7 @@ def ingest():
     )
     print(f"  health_demographics: {len(rows)} rows inserted")
 
+    # Indexes for fast filtering
     cursor.execute("CREATE INDEX idx_demo_bp ON health_demographics(Blood_Pressure_Abnormality)")
     cursor.execute("CREATE INDEX idx_demo_sex ON health_demographics(Sex)")
     cursor.execute("CREATE INDEX idx_demo_smoking ON health_demographics(Smoking)")
@@ -107,6 +105,7 @@ def ingest():
 
     conn.commit()
 
+    # Verify
     for table in ["health_demographics", "physical_activity"]:
         count = cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         print(f"  {table}: {count} rows verified")

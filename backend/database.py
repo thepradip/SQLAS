@@ -1,10 +1,7 @@
-from __future__ import annotations
 """
 Database layer — fully dynamic schema introspection for ANY SQL database.
 Supports SQLite, PostgreSQL, MySQL, etc. via SQLAlchemy async engine.
 Strictly read-only query execution.
-
-Author: Pradip Tivhale
 """
 
 import time
@@ -99,8 +96,8 @@ async def get_full_schema() -> dict:
 
 async def get_column_stats(table_name: str, columns: list[dict]) -> dict:
     """
-    Auto-compute column-level statistics: min/max/avg for numeric,
-    distinct count + top values for others.
+    Auto-compute column-level statistics: min/max/avg for numeric, distinct count + top values for others.
+    Works for any table and any column set.
     """
     stats = {}
     numeric_types = {"INTEGER", "REAL", "FLOAT", "DOUBLE", "NUMERIC", "DECIMAL", "BIGINT", "SMALLINT", "INT"}
@@ -133,6 +130,7 @@ async def get_column_stats(table_name: str, columns: list[dict]) -> dict:
                     ))
                     row = result.fetchone()
 
+                    # Top 10 most frequent values
                     top_result = await session.execute(text(
                         f'SELECT "{col_name}", COUNT(*) AS cnt FROM "{table_name}" '
                         f'WHERE "{col_name}" IS NOT NULL '
@@ -171,22 +169,27 @@ async def build_full_context() -> str:
     for table_name, info in schema.items():
         section = [f"## Table: `{table_name}` ({info['row_count']:,} rows)" if isinstance(info['row_count'], int) else f"## Table: `{table_name}`"]
 
+        # Primary key
         if info["primary_key"]:
             section.append(f"**Primary Key:** {', '.join(info['primary_key'])}")
 
+        # Columns
         section.append("| Column | Type | Nullable |")
         section.append("|--------|------|----------|")
         for col in info["columns"]:
             section.append(f"| `{col['name']}` | {col['type']} | {col['nullable']} |")
 
+        # Foreign keys
         if info["foreign_keys"]:
             section.append("\n**Foreign Keys:**")
             for fk in info["foreign_keys"]:
-                section.append(f"- `{', '.join(fk['columns'])}` -> `{fk['referred_table']}({', '.join(fk['referred_columns'])})`")
+                section.append(f"- `{', '.join(fk['columns'])}` → `{fk['referred_table']}({', '.join(fk['referred_columns'])})`")
 
+        # Indexes
         if info["indexes"]:
             section.append(f"\n**Indexes:** {', '.join(idx['name'] for idx in info['indexes'])}")
 
+        # Column stats
         col_stats = await get_column_stats(table_name, info["columns"])
         section.append("\n**Column Statistics:**")
         for col_name, st in col_stats.items():
@@ -196,6 +199,7 @@ async def build_full_context() -> str:
                 top = ", ".join(f"{v}({c})" for v, c in st.get("top_values", [])[:5])
                 section.append(f"- `{col_name}`: distinct={st['distinct']}, nulls={st['nulls']}, top_values=[{top}]")
 
+        # Sample rows
         sample = await get_sample_rows(table_name, 3)
         section.append(f"\n**Sample rows:** `{sample['columns']}`")
         for row in sample["rows"]:
@@ -203,10 +207,11 @@ async def build_full_context() -> str:
 
         sections.append("\n".join(section))
 
+    # Relationship summary (auto-detected from FKs)
     fk_summary = []
     for table_name, info in schema.items():
         for fk in info["foreign_keys"]:
-            fk_summary.append(f"- `{table_name}.{', '.join(fk['columns'])}` -> `{fk['referred_table']}.{', '.join(fk['referred_columns'])}`")
+            fk_summary.append(f"- `{table_name}.{', '.join(fk['columns'])}` → `{fk['referred_table']}.{', '.join(fk['referred_columns'])}`")
 
     if fk_summary:
         sections.append("## Detected Relationships\n" + "\n".join(fk_summary))
@@ -230,6 +235,7 @@ async def execute_readonly_query(sql: str) -> dict:
     """
     stripped = sql.strip().upper()
 
+    # Allow only SELECT and WITH (CTE)
     if not (stripped.startswith("SELECT") or stripped.startswith("WITH")):
         raise ValueError("Only SELECT queries are allowed. This is a read-only system.")
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import ChatInterface from "./components/ChatInterface";
 
@@ -11,6 +11,8 @@ export default function App() {
   const [showSchema, setShowSchema] = useState(false);
   const [health, setHealth] = useState(null);
   const [conversationId] = useState(() => crypto.randomUUID());
+  const inFlightRef = useRef(false);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     fetch(`${API}/health`)
@@ -24,7 +26,13 @@ export default function App() {
   }, []);
 
   const sendQuery = async (query) => {
-    const userMsg = { role: "user", content: query };
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery || inFlightRef.current) return;
+
+    inFlightRef.current = true;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const userMsg = { role: "user", content: normalizedQuery };
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
 
@@ -32,9 +40,10 @@ export default function App() {
       const res = await fetch(`${API}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, conversation_id: conversationId }),
+        body: JSON.stringify({ query: normalizedQuery, conversation_id: conversationId }),
       });
       const data = await res.json();
+      if (requestId !== requestIdRef.current) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -42,12 +51,14 @@ export default function App() {
           content: data.response,
           sql: data.sql,
           data: data.data,
+          visualization: data.visualization,
           success: data.success,
           trace_id: data.trace_id,
           metrics: data.metrics,
         },
       ]);
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setMessages((prev) => [
         ...prev,
         {
@@ -57,7 +68,10 @@ export default function App() {
         },
       ]);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        inFlightRef.current = false;
+        setLoading(false);
+      }
     }
   };
 
@@ -74,6 +88,9 @@ export default function App() {
   };
 
   const clearChat = () => {
+    requestIdRef.current += 1;
+    inFlightRef.current = false;
+    setLoading(false);
     setMessages([]);
     fetch(`${API}/conversations/${conversationId}`, { method: "DELETE" }).catch(
       () => {}
@@ -81,12 +98,13 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-950">
+    <div className="app-shell flex min-h-screen">
       <Sidebar
         health={health}
         schema={schema}
         showSchema={showSchema}
         setShowSchema={setShowSchema}
+        loading={loading}
         onClear={clearChat}
         onSampleQuery={sendQuery}
       />

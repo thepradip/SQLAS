@@ -1,11 +1,10 @@
-from __future__ import annotations
 """
-FastAPI backend — SQL AI Agent REST API powered by LangGraph and SQLAS.
+FastAPI backend — SQL AI Agent REST API with MLflow observability.
+Fully dynamic, works with any database.
 
 Author: Pradip Tivhale
 """
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -13,36 +12,34 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from database import get_table_list, build_full_context
-from agent.graph import run_query
-from agent.nodes import init_schema
+from agent import init_agent, run_query
+from tracing import init_tracing, log_user_feedback, log_detailed_feedback, EXPERIMENT_NAME
 from models import (
     QueryRequest, QueryResponse, HealthCheck, SchemaResponse,
-    FeedbackRequest, DetailedFeedbackRequest, SQLASScoresResponse,
+    FeedbackRequest, DetailedFeedbackRequest,
 )
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
-# ─── In-memory conversation store (swap to Redis for production) ──────────────
+# ─── In-memory conversation store (swap to Redis for production) ────────────────
 conversations: dict[str, list[dict]] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing SQL AI Agent (LangGraph + SQLAS)...")
-    await init_schema()
+    print("Initializing SQL AI Agent...")
+    init_tracing()
+    await init_agent()
     tables = await get_table_list()
-    logger.info("Database ready — %d tables: %s", len(tables), tables)
+    print(f"  Database ready — {len(tables)} tables: {tables}")
     yield
-    logger.info("Shutting down.")
+    print("Shutting down.")
 
 
 app = FastAPI(
     title="SQL AI Agent",
-    description="RAG-based NL-to-SQL Agent powered by LangGraph with SQLAS evaluation — by Pradip Tivhale",
-    version="3.0.0",
+    description="Natural language to SQL with MLflow observability — by Pradip Tivhale",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -55,7 +52,7 @@ app.add_middleware(
 )
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+# ─── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthCheck)
 async def health_check():
@@ -64,7 +61,7 @@ async def health_check():
         status="ok",
         database=settings.database_url.split("///")[-1],
         tables=tables,
-        agent_type="LangGraph + SQLAS",
+        mlflow_experiment=EXPERIMENT_NAME,
     )
 
 
@@ -86,11 +83,6 @@ async def query(request: QueryRequest):
     history.append({"role": "assistant", "content": result["response"]})
     conversations[conv_id] = history[-20:]
 
-    # Build SQLAS scores response
-    sqlas_scores = None
-    if result.get("sqlas_scores"):
-        sqlas_scores = SQLASScoresResponse(**result["sqlas_scores"])
-
     return QueryResponse(
         sql=result["sql"],
         data=result["data"],
@@ -98,13 +90,45 @@ async def query(request: QueryRequest):
         success=result["success"],
         trace_id=result.get("trace_id"),
         metrics=result.get("metrics"),
-        sqlas_scores=sqlas_scores,
+        visualization=result.get("visualization"),
     )
+
+
+@app.post("/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """Submit thumbs up/down feedback for a query trace."""
+    try:
+        log_user_feedback(
+            trace_id=request.trace_id,
+            feedback_value=request.value,
+            user_id=request.user_id,
+            comment=request.comment,
+        )
+        return {"status": "ok", "trace_id": request.trace_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/feedback/detailed")
+async def submit_detailed_feedback(request: DetailedFeedbackRequest):
+    """Submit detailed multi-dimension feedback."""
+    try:
+        log_detailed_feedback(
+            trace_id=request.trace_id,
+            accuracy=request.accuracy,
+            relevance=request.relevance,
+            sql_quality=request.sql_quality,
+            user_id=request.user_id,
+            comment=request.comment,
+        )
+        return {"status": "ok", "trace_id": request.trace_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/evaluate")
 async def run_eval(quick: bool = True):
-    """Run SQLAS evaluation suite. ?quick=true for 5 tests, ?quick=false for full 25."""
+    """Run SQLAS evaluation suite. ?quick=true for 3 tests, ?quick=false for full suite."""
     from eval_runner import run_evaluation
     try:
         results = await run_evaluation(quick=quick)
