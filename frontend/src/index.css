@@ -1,6 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-0: #07111f;
+    --bg-1: #0b1728;
+    --bg-2: #102238;
+    --surface: rgba(11, 23, 40, 0.78);
+    --surface-strong: rgba(14, 30, 48, 0.92);
+    --surface-soft: rgba(19, 39, 61, 0.58);
+    --line: rgba(125, 168, 214, 0.18);
+    --line-strong: rgba(125, 168, 214, 0.3);
+    --text-1: #f3f7fb;
+    --text-2: #c7d4e4;
+    --text-3: #88a0ba;
+    --accent: #66d9ef;
+    --accent-2: #80ffd3;
+    --danger: #ff857a;
+  }
+
+  html {
+    background:
+      radial-gradient(circle at top left, rgba(102, 217, 239, 0.18), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(128, 255, 211, 0.14), transparent 24%),
+      linear-gradient(180deg, #07111f 0%, #09131f 42%, #07111b 100%);
+  }
+
+  body {
+    font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    color: var(--text-1);
+    min-height: 100vh;
+    background: transparent;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .app-shell {
+    position: relative;
+    min-height: 100vh;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 25%),
+      radial-gradient(circle at 15% 10%, rgba(102, 217, 239, 0.09), transparent 23%),
+      radial-gradient(circle at 85% 18%, rgba(128, 255, 211, 0.07), transparent 20%);
+  }
+
+  .glass-panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+  }
+
+  .glass-panel-strong {
+    background: var(--surface-strong);
+    border: 1px solid var(--line-strong);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 28px 72px rgba(0, 0, 0, 0.32);
+  }
+}
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
@@ -11,19 +77,22 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: rgba(125, 168, 214, 0.34);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: rgba(125, 168, 214, 0.48);
 }
 
 /* Markdown rendering */
+.prose {
+  color: var(--text-2);
+}
 .prose h3 {
   font-size: 1.1rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
-  color: #e5e7eb;
+  color: var(--text-1);
 }
 .prose p {
   margin-bottom: 0.5rem;
@@ -38,80 +107,41 @@
 }
 .prose table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  margin: 1rem 0;
-  font-size: 0.82rem;
-  border: 1px solid #374151;
-  border-radius: 10px;
-  overflow: hidden;
-}
-.prose thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
 }
 .prose th {
-  background: linear-gradient(to bottom, #1e293b, #1a2332);
-  padding: 0.6rem 1rem;
+  background: rgba(13, 27, 43, 0.92);
+  padding: 0.5rem 0.75rem;
   text-align: left;
   font-weight: 600;
-  color: #c7d2fe;
-  border-bottom: 2px solid #4338ca40;
-  white-space: nowrap;
-  letter-spacing: 0.02em;
+  border-bottom: 2px solid rgba(125, 168, 214, 0.18);
 }
 .prose td {
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid #1f293780;
-  color: #d1d5db;
-  white-space: nowrap;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid rgba(125, 168, 214, 0.12);
 }
-.prose tbody tr:nth-child(even) td {
-  background: #0f172a40;
-}
-.prose tbody tr:hover td {
-  background: #312e8120;
-}
-.prose tbody tr:last-child td {
-  border-bottom: none;
-}
-
-/* Scrollable wrapper for wide markdown tables */
-.prose :has(> table) {
-  overflow-x: auto;
-  border-radius: 10px;
-}
-
-/* DataTable custom scrollbar */
-.datatable-scroll::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-.datatable-scroll::-webkit-scrollbar-thumb {
-  background: #4f46e540;
-  border-radius: 4px;
-}
-.datatable-scroll::-webkit-scrollbar-thumb:hover {
-  background: #6366f160;
+.prose tr:hover td {
+  background: rgba(15, 29, 46, 0.88);
 }
 .prose code {
-  background: #1f2937;
+  background: rgba(20, 38, 60, 0.86);
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
   font-size: 0.85em;
 }
 .prose pre {
-  background: #0f172a;
+  background: rgba(10, 20, 34, 0.94);
   padding: 1rem;
   border-radius: 8px;
   overflow-x: auto;
   margin: 0.75rem 0;
 }
 .prose strong {
-  color: #f3f4f6;
+  color: var(--text-1);
 }
 .prose em {
-  color: #9ca3af;
+  color: var(--text-3);
   font-style: italic;
 }

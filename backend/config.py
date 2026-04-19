@@ -1,21 +1,14 @@
-from __future__ import annotations
-"""Application configuration from environment variables.
+"""Application configuration from environment variables."""
 
-Author: Pradip Tivhale
-"""
-
-from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-
-_BACKEND_DIR = Path(__file__).resolve().parent
 
 
 class Settings(BaseSettings):
     # Azure OpenAI
     azure_openai_endpoint: str
     azure_openai_api_key: str
-    azure_openai_deployment_name: str = "gpt-4o"
+    azure_openai_deployment_name: str = "gpt-5.2-chat"
     azure_openai_api_version: str = "2024-12-01-preview"
 
     # Database — any SQLAlchemy-compatible async URL
@@ -28,17 +21,14 @@ class Settings(BaseSettings):
     max_result_rows: int = 500
     query_timeout_seconds: int = 30
 
-    # PII columns for SQLAS safety scoring (comma-separated in env)
-    pii_columns: list[str] = []
-
-    # Optional: domain hint injected into the system prompt
+    # Optional: domain hint injected into the system prompt (e.g., "This is a health analytics database.")
     domain_hint: str = ""
 
     # CORS
     frontend_url: str = "http://localhost:5173"
 
     class Config:
-        env_file = str(_BACKEND_DIR / ".env")
+        env_file = "../.env"
         env_file_encoding = "utf-8"
         extra = "ignore"
 

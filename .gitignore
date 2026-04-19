@@ -1,40 +1,47 @@
-# Environment & secrets
+# Environment and secrets
 .env
-*.env
+.env.*
 !.env.example
 
 # Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.egg-info/
 dist/
 build/
 venv/
 .venv/
-*.egg
 
-# Node
+# Node / Vite
 node_modules/
-npm-debug.log*
-package-lock.json
+frontend/node_modules/
+frontend/dist/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# Logs
+# Runtime artifacts
+*.db
+mlruns/
+backend/mlruns/
+frontend/mlflow.db
+backend/mlflow.db
 *.log
 
-# Database (regenerate via: python ingest.py)
-*.db
-
-# Pytest
-.pytest_cache/
-
-# Zip archives
+# Archives and generated documents
 *.zip
+*.tar.gz
+*.whl
+*.pdf
+tmp/
+output/
+
+# Local duplicate/archive copies and one-off files
+SQL-AI-Agent-Pradip-Tivhale/
+sqlas-package/
+TestPyPI-Recovery-Codes-*.txt
+Case Study for Lateral Hiring*.docx
+frontend/=3.1.0
+
+# OS/editor
+.DS_Store
