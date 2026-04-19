@@ -1,8 +1,8 @@
 """
 SQLAS — SQL Agent Scoring Framework
-Production-grade evaluation framework for Text-to-SQL and SQL AI agents.
+A RAGAS-equivalent evaluation library for Text-to-SQL and SQL AI agents.
 
-Author: Pradip Tivhale
+Author: SQLAS Contributors
 
 Usage:
     from sqlas import evaluate, SQLASScores, TestCase, WEIGHTS
@@ -17,18 +17,27 @@ Usage:
     print(scores.overall_score)
 """
 
-from sqlas.core import SQLASScores, TestCase, WEIGHTS, WEIGHTS_V2, compute_composite_score
+from sqlas.core import SQLASScores, TestCase, WEIGHTS, WEIGHTS_V2, WEIGHTS_V3, compute_composite_score
 from sqlas.evaluate import evaluate, evaluate_batch
 from sqlas.correctness import execution_accuracy, syntax_valid, semantic_equivalence, result_set_similarity
 from sqlas.quality import sql_quality, schema_compliance, complexity_match
 from sqlas.production import data_scan_efficiency, execution_result
 from sqlas.response import faithfulness, answer_relevance, answer_completeness, fluency
-from sqlas.safety import safety_score, read_only_compliance
+from sqlas.safety import (
+    guardrail_score,
+    pii_access_score,
+    pii_leakage_score,
+    prompt_injection_score,
+    safety_score,
+    read_only_compliance,
+    sql_injection_score,
+)
 from sqlas.context import context_precision, context_recall, entity_recall, noise_robustness
+from sqlas.visualization import chart_data_alignment, chart_llm_validation, chart_spec_validity, visualization_score
 from sqlas.runner import run_suite
 
-__version__ = "1.1.1"
-__author__ = "Pradip Tivhale"
+__version__ = "1.2.0"
+__author__ = "SQLAS Contributors"
 
 __all__ = [
     # Core
@@ -36,6 +45,7 @@ __all__ = [
     "TestCase",
     "WEIGHTS",
     "WEIGHTS_V2",
+    "WEIGHTS_V3",
     "compute_composite_score",
     # Top-level API
     "evaluate",
@@ -61,6 +71,16 @@ __all__ = [
     # Safety metrics
     "safety_score",
     "read_only_compliance",
+    "guardrail_score",
+    "sql_injection_score",
+    "prompt_injection_score",
+    "pii_access_score",
+    "pii_leakage_score",
+    # Visualization metrics
+    "chart_spec_validity",
+    "chart_data_alignment",
+    "chart_llm_validation",
+    "visualization_score",
     # Context metrics (RAGAS-mapped)
     "context_precision",
     "context_recall",

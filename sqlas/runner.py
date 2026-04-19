@@ -20,6 +20,7 @@ def run_suite(
     valid_tables: set[str] | None = None,
     valid_columns: dict[str, set[str]] | None = None,
     weights: dict | None = None,
+    validate_chart_with_llm: bool = True,
     pass_threshold: float = 0.6,
     verbose: bool = True,
 ) -> dict:
@@ -35,6 +36,7 @@ def run_suite(
         valid_tables:    Set of valid table names
         valid_columns:   Dict {table: {cols}}
         weights:         Custom weights (optional)
+        validate_chart_with_llm: Use LLM judge for visualization quality when payload exists
         pass_threshold:  Minimum overall_score to count as PASS (default 0.6)
         verbose:         Print progress
 
@@ -69,6 +71,8 @@ def run_suite(
             valid_tables=valid_tables,
             valid_columns=valid_columns,
             expected_nonempty=tc.expected_nonempty,
+            visualization=result.get("visualization"),
+            validate_chart_with_llm=validate_chart_with_llm,
             weights=weights,
         )
 
@@ -110,9 +114,19 @@ def run_suite(
         "answer_relevance": avg("answer_relevance"),
         "answer_completeness": avg("answer_completeness"),
         "fluency": avg("fluency"),
+        # Visualization
+        "visualization_score": avg("visualization_score"),
+        "chart_spec_validity": avg("chart_spec_validity"),
+        "chart_data_alignment": avg("chart_data_alignment"),
+        "chart_llm_validation": avg("chart_llm_validation"),
         # Safety
         "read_only_compliance": avg("read_only_compliance"),
         "safety_score": avg("safety_score"),
+        "sql_injection_score": avg("sql_injection_score"),
+        "prompt_injection_score": avg("prompt_injection_score"),
+        "pii_access_score": avg("pii_access_score"),
+        "pii_leakage_score": avg("pii_leakage_score"),
+        "guardrail_score": avg("guardrail_score"),
         "by_category": {
             cat: round(sum(s) / len(s), 4) for cat, s in category_scores.items()
         },

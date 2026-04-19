@@ -6,6 +6,8 @@ Production Execution Metrics.
 Author: SQLAS Contributors
 """
 
+import re
+
 
 def data_scan_efficiency(sql: str, result_row_count: int = 0) -> tuple[float, dict]:
     """

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqlas"
-version = "1.1.1"
-description = "SQLAS — SQL Agent Scoring Framework. Production-grade evaluation for Text-to-SQL and SQL AI agents. 20 metrics across 8 categories."
+version = "1.2.0"
+description = "SQLAS — SQL Agent Scoring Framework. A RAGAS-equivalent evaluation library for Text-to-SQL and SQL AI agents with guardrail and visualization metrics."
 readme = "README.md"
-license = {text = "MIT"}
-authors = [{name = "Pradip Tivhale", email = "pradiptivhale@gmail.com"}]
+license = "MIT"
+authors = [{name = "thepradip", email = "pradiptivhale@gmail.com"}]
 requires-python = ">=3.10"
 keywords = ["sql", "agent", "evaluation", "llm", "text-to-sql", "ragas", "mlflow", "benchmark", "monitoring"]
 classifiers = [

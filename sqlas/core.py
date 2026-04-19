@@ -80,6 +80,49 @@ WEIGHTS_V2 = {
 }
 
 
+# ── Production Composite Weights (v3 — guardrails + visualization) ───────
+# Extends v2 with explicit PII, prompt-injection, and chart quality metrics.
+# ────────────────────────────────────────────────────────────────────────────
+
+WEIGHTS_V3 = {
+    # 1. Execution Accuracy (30%)
+    "execution_accuracy": 0.30,
+    # 2. Semantic Correctness (10%)
+    "semantic_equivalence": 0.10,
+    # 3. Context Quality (8%)
+    "context_precision": 0.02,
+    "context_recall": 0.02,
+    "entity_recall": 0.02,
+    "noise_robustness": 0.02,
+    # 4. Cost Efficiency (10%)
+    "efficiency_score": 0.03,
+    "data_scan_efficiency": 0.03,
+    "sql_quality": 0.02,
+    "schema_compliance": 0.02,
+    # 5. Execution Quality (7%)
+    "execution_success": 0.03,
+    "complexity_match": 0.02,
+    "empty_result_penalty": 0.02,
+    # 6. Task Success (8%)
+    "faithfulness": 0.03,
+    "answer_relevance": 0.02,
+    "answer_completeness": 0.02,
+    "fluency": 0.01,
+    # 7. Result + Visualization (7%)
+    "result_set_similarity": 0.02,
+    "chart_spec_validity": 0.015,
+    "chart_data_alignment": 0.015,
+    "chart_llm_validation": 0.02,
+    # 8. Guardrails (20%)
+    "read_only_compliance": 0.035,
+    "sql_injection_score": 0.035,
+    "prompt_injection_score": 0.04,
+    "pii_access_score": 0.035,
+    "pii_leakage_score": 0.025,
+    "guardrail_score": 0.03,
+}
+
+
 @dataclass
 class TestCase:
     """A single evaluation test case."""
@@ -123,6 +166,11 @@ class SQLASScores:
     # 5. Safety & Governance
     read_only_compliance: float = 0.0
     safety_score: float = 0.0
+    sql_injection_score: float = 0.0
+    prompt_injection_score: float = 0.0
+    pii_access_score: float = 0.0
+    pii_leakage_score: float = 0.0
+    guardrail_score: float = 0.0
 
     # 6. Context Quality (RAGAS-mapped)
     context_precision: float = 0.0
@@ -131,16 +179,23 @@ class SQLASScores:
     noise_robustness: float = 0.0
     result_set_similarity: float = 0.0
 
+    # 7. Visualization Quality
+    chart_spec_validity: float = 0.0
+    chart_data_alignment: float = 0.0
+    chart_llm_validation: float = 0.0
+    visualization_score: float = 0.0
+
     # Composite
     overall_score: float = 0.0
     details: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Export all scores as a flat dictionary."""
-        all_keys = set(WEIGHTS.keys()) | set(WEIGHTS_V2.keys())
+        all_keys = set(WEIGHTS.keys()) | set(WEIGHTS_V2.keys()) | set(WEIGHTS_V3.keys())
         d = {}
         for key in all_keys:
             d[key] = getattr(self, key, 0.0)
+        d["visualization_score"] = self.visualization_score
         d["overall_score"] = self.overall_score
         d["syntax_valid"] = self.syntax_valid
         d["execution_time_ms"] = self.execution_time_ms
@@ -158,7 +213,8 @@ class SQLASScores:
             "Cost Efficiency": [("efficiency", self.efficiency_score), ("data_scan", self.data_scan_efficiency), ("sql_quality", self.sql_quality), ("schema", self.schema_compliance)],
             "Execution Quality": [("exec_success", self.execution_success), ("complexity", self.complexity_match), ("empty_result", self.empty_result_penalty)],
             "Task Success": [("faithfulness", self.faithfulness), ("relevance", self.answer_relevance), ("completeness", self.answer_completeness), ("fluency", self.fluency)],
-            "Safety": [("read_only", self.read_only_compliance), ("safety", self.safety_score)],
+            "Visualization": [("spec", self.chart_spec_validity), ("alignment", self.chart_data_alignment), ("llm", self.chart_llm_validation), ("overall", self.visualization_score)],
+            "Guardrails": [("read_only", self.read_only_compliance), ("sql_injection", self.sql_injection_score), ("prompt_injection", self.prompt_injection_score), ("pii_access", self.pii_access_score), ("pii_leakage", self.pii_leakage_score), ("guardrail", self.guardrail_score)],
         }
         for cat, metrics in cats.items():
             lines.append(f"  {cat}")

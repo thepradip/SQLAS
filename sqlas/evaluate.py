@@ -12,8 +12,17 @@ from sqlas.correctness import execution_accuracy, syntax_valid, semantic_equival
 from sqlas.quality import sql_quality, schema_compliance, complexity_match
 from sqlas.production import data_scan_efficiency, execution_result
 from sqlas.response import faithfulness, answer_relevance, answer_completeness, fluency
-from sqlas.safety import safety_score, read_only_compliance
+from sqlas.safety import (
+    guardrail_score,
+    pii_access_score,
+    pii_leakage_score,
+    prompt_injection_score,
+    safety_score,
+    read_only_compliance,
+    sql_injection_score,
+)
 from sqlas.context import context_precision, context_recall, entity_recall, noise_robustness
+from sqlas.visualization import visualization_score
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +40,8 @@ def evaluate(
     schema_context: str = "",
     expected_nonempty: bool = True,
     pii_columns: list[str] | None = None,
+    visualization: dict | None = None,
+    validate_chart_with_llm: bool = True,
     weights: dict | None = None,
 ) -> SQLASScores:
     """
@@ -49,6 +60,8 @@ def evaluate(
         schema_context:  Brief schema text for SQL quality judge
         expected_nonempty: Whether non-empty result is expected
         pii_columns:     Custom PII column names for safety check
+        visualization:    Generated visualization/chart payload (optional)
+        validate_chart_with_llm: Whether to use llm_judge for chart relevance
         weights:         Custom weight dict (defaults to SQLAS production weights)
 
     Returns:
@@ -168,9 +181,44 @@ def evaluate(
     # ── 6. Safety ───────────────────────────────────────────────────────
     scores.read_only_compliance = read_only_compliance(generated_sql)
 
-    safety, safety_details = safety_score(generated_sql, response or "", pii_columns)
+    sql_inj, sql_inj_details = sql_injection_score(generated_sql)
+    scores.sql_injection_score = sql_inj
+    scores.details["sql_injection"] = sql_inj_details
+
+    prompt_inj, prompt_inj_details = prompt_injection_score(question, response or "")
+    scores.prompt_injection_score = prompt_inj
+    scores.details["prompt_injection"] = prompt_inj_details
+
+    pii_access, pii_access_details = pii_access_score(generated_sql, pii_columns)
+    scores.pii_access_score = pii_access
+    scores.details["pii_access"] = pii_access_details
+
+    pii_leak, pii_leak_details = pii_leakage_score(response or "")
+    scores.pii_leakage_score = pii_leak
+    scores.details["pii_leakage"] = pii_leak_details
+
+    guardrail, guardrail_details = guardrail_score(question, generated_sql, response or "", pii_columns)
+    scores.guardrail_score = guardrail
+    scores.details["guardrails"] = guardrail_details
+
+    safety, safety_details = safety_score(generated_sql, response or "", pii_columns, question)
     scores.safety_score = safety
     scores.details["safety"] = safety_details
+
+    # ── 7. Visualization ────────────────────────────────────────────────
+    if visualization is not None:
+        vis, vis_details = visualization_score(
+            question=question,
+            response=response or "",
+            visualization=visualization,
+            result_data=result_data,
+            llm_judge=llm_judge if validate_chart_with_llm else None,
+        )
+        scores.visualization_score = vis
+        scores.chart_spec_validity = vis_details["chart_spec_validity"]
+        scores.chart_data_alignment = vis_details["chart_data_alignment"]
+        scores.chart_llm_validation = vis_details["chart_llm_validation"] or 0.0
+        scores.details["visualization"] = vis_details
 
     # ── Composite ───────────────────────────────────────────────────────
     scores.overall_score = compute_composite_score(scores, weights)
@@ -186,6 +234,7 @@ def evaluate_batch(
     valid_columns: dict[str, set[str]] | None = None,
     schema_context: str = "",
     pii_columns: list[str] | None = None,
+    validate_chart_with_llm: bool = True,
     weights: dict | None = None,
 ) -> list[SQLASScores]:
     """
@@ -212,6 +261,8 @@ def evaluate_batch(
             schema_context=tc.get("schema_context", schema_context),
             expected_nonempty=tc.get("expected_nonempty", True),
             pii_columns=pii_columns,
+            visualization=tc.get("visualization"),
+            validate_chart_with_llm=validate_chart_with_llm,
             weights=weights,
         )
         results.append(scores)
