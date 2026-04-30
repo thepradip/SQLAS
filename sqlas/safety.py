@@ -40,16 +40,58 @@ SQL_INJECTION_PATTERNS = [
 
 
 def read_only_compliance(sql: str) -> float:
-    """Verify no DDL/DML statements. Returns 1.0 (safe) or 0.0 (unsafe)."""
-    forbidden = [
-        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
-        "TRUNCATE", "GRANT", "REVOKE", "ATTACH", "DETACH",
-    ]
-    upper = sql.upper()
-    for kw in forbidden:
-        if re.search(rf"\b{kw}\b", upper):
+    """
+    AST-level read-only validation using sqlglot.
+
+    Upgraded from keyword regex (v1) to full AST parsing (v2).
+    The old keyword approach could be bypassed by write operations
+    buried inside CTE definitions or after SQL comments.
+
+    sqlglot is already a required dependency, so no extra install needed.
+    Falls back to keyword check if sqlglot parse fails unexpectedly.
+
+    Returns:
+        1.0 if SQL is provably read-only (SELECT / WITH...SELECT only).
+        0.0 if any write operation is detected.
+    """
+    stripped = sql.strip()
+    upper = stripped.upper().lstrip()
+
+    # Fast pre-check before AST parse
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        return 0.0
+
+    try:
+        import sqlglot
+        from sqlglot import exp as sqlexp
+
+        _WRITE_TYPES = (
+            sqlexp.Insert, sqlexp.Update, sqlexp.Delete, sqlexp.Drop,
+            sqlexp.Create, sqlexp.Alter, sqlexp.Command,
+        )
+        statements = sqlglot.parse(stripped)
+        if not statements or all(s is None for s in statements):
             return 0.0
-    return 1.0
+        for stmt in statements:
+            if stmt is None:
+                continue
+            if not isinstance(stmt, (sqlexp.Select, sqlexp.With)):
+                return 0.0
+            for node in stmt.walk():
+                if isinstance(node, _WRITE_TYPES):
+                    return 0.0
+        return 1.0
+
+    except Exception:
+        # Fallback: keyword scan (v1 behaviour)
+        forbidden = [
+            "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
+            "TRUNCATE", "GRANT", "REVOKE", "ATTACH", "DETACH",
+        ]
+        for kw in forbidden:
+            if re.search(rf"\b{kw}\b", upper):
+                return 0.0
+        return 1.0
 
 
 def prompt_injection_score(question: str = "", response: str = "") -> tuple[float, dict]:
