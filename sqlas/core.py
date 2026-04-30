@@ -123,6 +123,52 @@ WEIGHTS_V3 = {
 }
 
 
+# ── Production Composite Weights (v4 — agentic + cache) ──────────────────────
+# Extends v3 with an explicit agentic quality dimension (10%).
+# Core correctness reduced from 30% to 25% to make room.
+# ────────────────────────────────────────────────────────────────────────────
+
+WEIGHTS_V4 = {
+    # 1. Execution Accuracy (25%)
+    "execution_accuracy": 0.25,
+    # 2. Semantic Correctness (10%)
+    "semantic_equivalence": 0.10,
+    # 3. Context Quality (8%)
+    "context_precision": 0.02,
+    "context_recall": 0.02,
+    "entity_recall": 0.02,
+    "noise_robustness": 0.02,
+    # 4. Cost Efficiency (10%)
+    "efficiency_score": 0.03,
+    "data_scan_efficiency": 0.03,
+    "sql_quality": 0.02,
+    "schema_compliance": 0.02,
+    # 5. Execution Quality (7%)
+    "execution_success": 0.03,
+    "complexity_match": 0.02,
+    "empty_result_penalty": 0.02,
+    # 6. Task Success (8%)
+    "faithfulness": 0.03,
+    "answer_relevance": 0.02,
+    "answer_completeness": 0.02,
+    "fluency": 0.01,
+    # 7. Result + Visualization (7%)
+    "result_set_similarity": 0.02,
+    "chart_spec_validity": 0.015,
+    "chart_data_alignment": 0.015,
+    "chart_llm_validation": 0.02,
+    # 8. Guardrails (15%)
+    "read_only_compliance": 0.03,
+    "sql_injection_score": 0.03,
+    "prompt_injection_score": 0.03,
+    "pii_access_score": 0.03,
+    "pii_leakage_score": 0.02,
+    "guardrail_score": 0.01,
+    # 9. Agentic Quality (10%)
+    "agentic_score": 0.10,
+}
+
+
 @dataclass
 class TestCase:
     """A single evaluation test case."""
@@ -185,6 +231,21 @@ class SQLASScores:
     chart_llm_validation: float = 0.0
     visualization_score: float = 0.0
 
+    # 8. Agentic Quality (informational — not in weighted score by default)
+    agent_mode: str = "pipeline"          # "pipeline" | "react"
+    steps_taken: int = 0                  # ReAct tool calls made
+    steps_efficiency: float = 0.0         # 1.0 if steps <= optimal, degrades above
+    schema_grounding: float = 0.0         # did agent inspect schema before querying?
+    planning_quality: float = 0.0         # LLM judge: was the reasoning sequence good?
+    tool_use_accuracy: float = 0.0        # LLM judge: were right tools called?
+    agentic_score: float = 0.0            # composite of above four
+
+    # 9. Cache Performance (informational)
+    cache_hit: bool = False               # served from cache?
+    cache_type: str = ""                  # "exact" | "semantic" | ""
+    tokens_saved: int = 0                 # tokens saved vs full pipeline
+    few_shot_count: int = 0               # few-shot examples injected
+
     # Composite
     overall_score: float = 0.0
     details: dict = field(default_factory=dict)
@@ -226,6 +287,15 @@ class SQLASScores:
 # ── LLM Judge type ──────────────────────────────────────────────────────────
 # Users provide their own LLM function: (prompt: str) -> str
 LLMJudge = Callable[[str], str]
+
+# ── Execute function type ────────────────────────────────────────────────────
+# Users provide their own query executor: (sql: str) -> list[tuple]
+# Enables evaluation against any database (Postgres, MySQL, Snowflake, BigQuery, etc.)
+# The function must execute the SQL and return rows as a list of tuples.
+# Example:
+#   def my_pg_executor(sql: str) -> list[tuple]:
+#       return pg_conn.execute(sql).fetchall()
+ExecuteFn = Callable[[str], list[tuple]]
 
 
 def _parse_score(result: str, key: str) -> tuple[float, str]:
