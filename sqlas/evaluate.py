@@ -7,7 +7,7 @@ Author: SQLAS Contributors
 import logging
 import os
 
-from sqlas.core import SQLASScores, TestCase, LLMJudge, WEIGHTS, compute_composite_score
+from sqlas.core import SQLASScores, TestCase, LLMJudge, ExecuteFn, WEIGHTS, compute_composite_score
 from sqlas.correctness import execution_accuracy, syntax_valid, semantic_equivalence, result_set_similarity
 from sqlas.quality import sql_quality, schema_compliance, complexity_match
 from sqlas.production import data_scan_efficiency, execution_result
@@ -23,6 +23,12 @@ from sqlas.safety import (
 )
 from sqlas.context import context_precision, context_recall, entity_recall, noise_robustness
 from sqlas.visualization import visualization_score
+from sqlas.agentic import (
+    agentic_score as _agentic_score,
+    steps_efficiency as _steps_efficiency,
+    schema_grounding as _schema_grounding,
+)
+from sqlas.cache import cache_hit_score, tokens_saved_score, few_shot_score
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +39,7 @@ def evaluate(
     llm_judge: LLMJudge,
     gold_sql: str | None = None,
     db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
     response: str | None = None,
     result_data: dict | None = None,
     valid_tables: set[str] | None = None,
@@ -43,6 +50,10 @@ def evaluate(
     visualization: dict | None = None,
     validate_chart_with_llm: bool = True,
     weights: dict | None = None,
+    # v2.0 — Agentic + Cache
+    agent_steps: list[dict] | None = None,
+    agent_result: dict | None = None,
+    optimal_steps: int = 3,
 ) -> SQLASScores:
     """
     Evaluate a single SQL agent query across all SQLAS metrics.
@@ -52,7 +63,10 @@ def evaluate(
         generated_sql:   SQL produced by the agent
         llm_judge:       Function (prompt: str) -> str for LLM-as-judge metrics
         gold_sql:        Ground-truth SQL (optional, enables execution accuracy & context metrics)
-        db_path:         Path to SQLite database (required for execution accuracy)
+        db_path:         Path to SQLite database (backward-compatible)
+        execute_fn:      Optional callable (sql: str) -> list[tuple].
+                         Takes precedence over db_path. Enables evaluation against
+                         any database — Postgres, MySQL, Snowflake, BigQuery, etc.
         response:        Agent's natural language response (optional, enables faithfulness/relevance)
         result_data:     Query result dict: {columns, rows, row_count, execution_time_ms}
         valid_tables:    Set of valid table names (enables schema compliance)
@@ -60,9 +74,12 @@ def evaluate(
         schema_context:  Brief schema text for SQL quality judge
         expected_nonempty: Whether non-empty result is expected
         pii_columns:     Custom PII column names for safety check
-        visualization:    Generated visualization/chart payload (optional)
+        visualization:   Generated visualization/chart payload (optional)
         validate_chart_with_llm: Whether to use llm_judge for chart relevance
         weights:         Custom weight dict (defaults to SQLAS production weights)
+        agent_steps:     ReAct loop steps [{tool, args, result_preview}] (v2.0 agentic mode)
+        agent_result:    Full agent result dict for cache metric extraction (v2.0)
+        optimal_steps:   Step count considered ideal for efficiency scoring (default 3)
 
     Returns:
         SQLASScores with all metrics and overall_score
@@ -74,7 +91,7 @@ def evaluate(
         scores.details["error"] = "generated_sql is empty or invalid"
         return scores
 
-    if db_path and not os.path.exists(db_path):
+    if db_path and execute_fn is None and not os.path.exists(db_path):
         logger.error("db_path does not exist: %s", db_path)
         scores = SQLASScores()
         scores.details["error"] = f"db_path not found: {db_path}"
@@ -90,8 +107,9 @@ def evaluate(
     # ── 1. Core Correctness ─────────────────────────────────────────────
     scores.syntax_valid = syntax_valid(generated_sql)
 
-    if gold_sql and db_path:
-        ex_acc, ex_details = execution_accuracy(generated_sql, gold_sql, db_path)
+    _can_execute = execute_fn is not None or db_path is not None
+    if gold_sql and _can_execute:
+        ex_acc, ex_details = execution_accuracy(generated_sql, gold_sql, db_path, execute_fn)
         scores.execution_accuracy = ex_acc
         scores.details["execution_accuracy"] = ex_details
 
@@ -123,8 +141,8 @@ def evaluate(
         scores.noise_robustness = nr
         scores.details["noise_robustness"] = nr_details
 
-        if db_path:
-            rs, rs_details = result_set_similarity(generated_sql, gold_sql, db_path)
+        if _can_execute:
+            rs, rs_details = result_set_similarity(generated_sql, gold_sql, db_path, execute_fn)
             scores.result_set_similarity = rs
             scores.details["result_set_similarity"] = rs_details
 
@@ -220,6 +238,35 @@ def evaluate(
         scores.chart_llm_validation = vis_details["chart_llm_validation"] or 0.0
         scores.details["visualization"] = vis_details
 
+    # ── 8. Agentic Quality (v2.0) ───────────────────────────────────────
+    steps = agent_steps or []
+    scores.agent_mode = "react" if steps else "pipeline"
+    scores.steps_taken = len(steps)
+    scores.steps_efficiency = _steps_efficiency(len(steps), optimal_steps)
+    scores.schema_grounding = _schema_grounding(steps)
+
+    if steps:
+        ag_score, ag_details = _agentic_score(question, steps, llm_judge, optimal_steps)
+        scores.agentic_score = ag_score
+        scores.planning_quality = ag_details.get("planning_quality", 0.0)
+        scores.details["agentic"] = ag_details
+    else:
+        scores.agentic_score = 1.0   # pipeline mode not penalised by default
+
+    # ── 9. Cache Performance (v2.0) ─────────────────────────────────────
+    if agent_result:
+        ch, ch_details = cache_hit_score(agent_result)
+        scores.cache_hit = bool(ch)
+        scores.details["cache_hit"] = ch_details
+
+        ts, ts_details = tokens_saved_score(agent_result)
+        scores.tokens_saved = ch_details.get("tokens_saved", 0)
+        scores.details["tokens_saved"] = ts_details
+
+        fs, fs_details = few_shot_score(agent_result)
+        scores.few_shot_count = fs_details.get("few_shot_count", 0)
+        scores.details["few_shot"] = fs_details
+
     # ── Composite ───────────────────────────────────────────────────────
     scores.overall_score = compute_composite_score(scores, weights)
 
@@ -230,6 +277,7 @@ def evaluate_batch(
     test_cases: list[dict],
     llm_judge: LLMJudge,
     db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
     valid_tables: set[str] | None = None,
     valid_columns: dict[str, set[str]] | None = None,
     schema_context: str = "",
@@ -254,6 +302,7 @@ def evaluate_batch(
             llm_judge=llm_judge,
             gold_sql=tc.get("gold_sql"),
             db_path=db_path,
+            execute_fn=execute_fn,
             response=tc.get("response"),
             result_data=tc.get("result_data"),
             valid_tables=valid_tables,
