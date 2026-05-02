@@ -34,37 +34,53 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 - **ReAct loop** — Reason → call tool → observe result → repeat until confident
 - **4 tools**: `list_tables`, `describe_table`, `execute_sql`, `final_answer`
 - Agent inspects schema before querying — no hallucinated column names
-- Handles multi-step questions that require multiple SQL queries
 - Auto-routing: complex queries use ReAct; simple queries use fast pipeline
-- Every reasoning step visible in the UI and traced in MLflow
 
 ---
 
 ## Intelligent Schema Retrieval (100+ tables)
 
-- **BM25 + dense embedding hybrid search** with Reciprocal Rank Fusion (RRF)
-- **FK-graph-aware** table selection — JOIN-required tables always included
-- **Token budget control** — injects only 8-12 relevant tables per query (not all 100+)
-- Schema stats cached to disk — instant restart after first run
+- **BM25 + dense embedding hybrid search** with Reciprocal Rank Fusion
+- **FK-graph-aware** table selection, token budget control, disk-cached stats
 
 ---
 
 ## Semantic Query Cache
 
-Three cache levels — after warmup, 60-80% of queries never reach the LLM:
+L1 exact → L2 semantic → L4 result TTL. 60-80% cache hit rate after warmup.
+Learning loop: thumbs-up → verified few-shot examples improve future queries.
 
-| Level | Mechanism | Latency | Tokens saved |
-|---|---|---|---|
-| L1 | Exact hash match | <1ms | ~9,500 (~$0.047) |
-| L2 | Semantic cosine ≥ 0.92 | ~5ms | ~8,600 (~$0.043) |
-| L4 | SQL result TTL (5 min) | <1ms | DB execution time |
+---
 
-**Learning loop** — user thumbs-up marks a query as *verified*. Verified queries are injected as few-shot examples into future similar queries, improving SQL accuracy over time without retraining.
+## Any LLM, Any Database
 
+**LLM providers** — swap without changing any business logic:
+
+```env
+# Use one of:
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o          # Azure OpenAI (default)
+OPENAI_API_KEY=sk-...                         # OpenAI direct
+ANTHROPIC_API_KEY=sk-ant-...                  # Anthropic Claude
+OLLAMA_BASE_URL=http://localhost:11434        # Local models (Llama, SQLCoder)
 ```
-GET /cache/stats  →  hit_rate, tokens_saved, cost_saved_usd, top_queries
-DELETE /cache/results  →  flush result cache after data updates
+
+**Databases** — any SQLAlchemy-compatible URL:
+
+```env
+DATABASE_URL=sqlite+aiosqlite:///./my.db
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
+DATABASE_URL=mysql+aiomysql://user:pass@host:3306/dbname
 ```
+
+---
+
+## Production Safety
+
+- **AST-based read-only** via sqlglot — blocks write ops inside CTEs, not just keywords
+- **Query timeout** — configurable (default 30s), enforced via `asyncio.wait_for`
+- **Memory-safe** — `fetchmany()` bounds result sets, no OOM on large tables
+- **Persistent conversations** — SQLite-backed, survive server restarts
+- **SQL injection detection**, **PII access scoring**, **prompt injection** checks
 
 ---
 
