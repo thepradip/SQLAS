@@ -27,6 +27,21 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 
 **Author:** [Pradip Tivhale](https://github.com/thepradip)
 
+
+
+---
+
+## Quick Start
+
+```bash
+git clone https://github.com/thepradip/AriaSQL.git && cd AriaSQL
+cd backend && pip install -r requirements.txt && cp .env.example .env
+python ingest.py && uvicorn main:app --reload
+# frontend: cd frontend && npm install && npm run dev
+```
+
+---
+
 ---
 
 ## Agentic Reasoning
@@ -60,18 +75,7 @@ SQLite · PostgreSQL · MySQL · any SQLAlchemy async URL.
 
 AST-based read-only (sqlglot) · query timeout · fetchmany OOM protection · persistent conversations.
 
----
 
-## Quick Start
-
-```bash
-git clone https://github.com/thepradip/AriaSQL.git && cd AriaSQL
-cd backend && pip install -r requirements.txt && cp .env.example .env
-python ingest.py && uvicorn main:app --reload
-# frontend: cd frontend && npm install && npm run dev
-```
-
----
 
 ## API Reference
 
