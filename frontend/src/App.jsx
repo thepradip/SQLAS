@@ -10,6 +10,7 @@ export default function App() {
   const [schema, setSchema] = useState(null);
   const [showSchema, setShowSchema] = useState(false);
   const [health, setHealth] = useState(null);
+  const [agenticMode, setAgenticMode] = useState(false);
   const [conversationId] = useState(() => crypto.randomUUID());
   const inFlightRef = useRef(false);
   const requestIdRef = useRef(0);
@@ -40,7 +41,11 @@ export default function App() {
       const res = await fetch(`${API}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: normalizedQuery, conversation_id: conversationId }),
+        body: JSON.stringify({
+          query: normalizedQuery,
+          conversation_id: conversationId,
+          force_agentic: agenticMode,
+        }),
       });
       const data = await res.json();
       if (requestId !== requestIdRef.current) return;
@@ -55,6 +60,8 @@ export default function App() {
           success: data.success,
           trace_id: data.trace_id,
           metrics: data.metrics,
+          agent_mode: data.agent_mode,
+          agent_steps: data.agent_steps,
         },
       ]);
     } catch (err) {
@@ -113,6 +120,8 @@ export default function App() {
         loading={loading}
         onSend={sendQuery}
         onFeedback={sendFeedback}
+        agenticMode={agenticMode}
+        onToggleAgentic={() => setAgenticMode((p) => !p)}
       />
     </div>
   );

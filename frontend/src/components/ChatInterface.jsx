@@ -1,15 +1,36 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, Cpu, Zap } from "lucide-react";
 import MessageBubble from "./MessageBubble";
 
-export default function ChatInterface({ messages, loading, onSend, onFeedback }) {
+const LOADING_STAGES = [
+  { after: 0,    text: "Analyzing your question..." },
+  { after: 2500, text: "Exploring database schema..." },
+  { after: 5500, text: "Generating SQL query..." },
+  { after: 9000, text: "Executing and synthesizing results..." },
+];
+
+export default function ChatInterface({ messages, loading, onSend, onFeedback, agenticMode, onToggleAgentic }) {
   const [input, setInput] = useState("");
+  const [loadingText, setLoadingText] = useState(LOADING_STAGES[0].text);
   const endRef = useRef(null);
   const inputRef = useRef(null);
+  const stageTimers = useRef([]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useEffect(() => {
+    stageTimers.current.forEach(clearTimeout);
+    stageTimers.current = [];
+    if (loading) {
+      setLoadingText(LOADING_STAGES[0].text);
+      LOADING_STAGES.slice(1).forEach(({ after, text }) => {
+        stageTimers.current.push(setTimeout(() => setLoadingText(text), after));
+      });
+    }
+    return () => stageTimers.current.forEach(clearTimeout);
+  }, [loading]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -50,9 +71,12 @@ export default function ChatInterface({ messages, loading, onSend, onFeedback })
                 <div className="w-9 h-9 rounded-xl bg-[rgba(102,217,239,0.14)] flex items-center justify-center flex-shrink-0">
                   <Loader2 size={16} className="text-[var(--accent)] animate-spin" />
                 </div>
-                <div className="text-sm text-[var(--text-2)]">
-                  Generating SQL and analyzing...
-                </div>
+                <div className="text-sm text-[var(--text-2)] transition-all">{loadingText}</div>
+                {agenticMode && (
+                  <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-violet-300 px-2 py-1 bg-violet-400/10 border border-violet-300/15 rounded-full">
+                    <Cpu size={10} /> Agentic
+                  </span>
+                )}
               </div>
             )}
             <div ref={endRef} />
@@ -62,10 +86,7 @@ export default function ChatInterface({ messages, loading, onSend, onFeedback })
 
       {/* Input */}
       <div className="border-t border-[rgba(125,168,214,0.14)] bg-[rgba(6,14,24,0.42)] backdrop-blur-xl p-5">
-        <form
-          onSubmit={handleSubmit}
-          className="max-w-5xl mx-auto flex items-center gap-3"
-        >
+        <form onSubmit={handleSubmit} className="max-w-5xl mx-auto flex items-center gap-3">
           <input
             ref={inputRef}
             type="text"
@@ -75,20 +96,34 @@ export default function ChatInterface({ messages, loading, onSend, onFeedback })
             className="flex-1 glass-panel rounded-2xl px-5 py-4 text-sm text-[var(--text-1)] placeholder:text-[var(--text-3)] focus:outline-none focus:border-[rgba(102,217,239,0.28)] focus:ring-1 focus:ring-[rgba(102,217,239,0.22)] transition-all"
             disabled={loading}
           />
+
+          {/* Agentic toggle */}
+          <button
+            type="button"
+            onClick={onToggleAgentic}
+            disabled={loading}
+            title={agenticMode ? "Agentic mode on — click to use fast pipeline" : "Pipeline mode — click for agentic reasoning"}
+            className={`rounded-2xl px-4 py-4 border transition-all flex items-center gap-2 text-[13px] ${
+              agenticMode
+                ? "bg-violet-400/10 border-violet-300/25 text-violet-300 hover:bg-violet-400/15"
+                : "glass-panel border-[rgba(125,168,214,0.14)] text-[var(--text-3)] hover:text-[var(--text-2)]"
+            }`}
+          >
+            {agenticMode ? <Cpu size={16} /> : <Zap size={16} />}
+          </button>
+
           <button
             type="submit"
             disabled={loading || !input.trim()}
             className="rounded-2xl px-5 py-4 bg-[linear-gradient(135deg,#66d9ef_0%,#80ffd3_100%)] hover:brightness-105 disabled:bg-slate-800 disabled:text-slate-500 disabled:brightness-100 text-slate-950 shadow-[0_18px_38px_rgba(102,217,239,0.18)] transition-all"
           >
-            {loading ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Send size={18} />
-            )}
+            {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
           </button>
         </form>
         <p className="text-center text-[11px] text-[var(--text-3)] mt-3 tracking-[0.12em] uppercase">
-          Read-only access. No data will be modified.
+          {agenticMode
+            ? "Agentic mode — explores schema, runs multi-step reasoning"
+            : "Read-only access. No data will be modified."}
         </p>
       </div>
     </main>

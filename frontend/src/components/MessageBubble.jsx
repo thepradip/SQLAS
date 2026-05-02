@@ -2,9 +2,10 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   User, Bot, Clock, Check, X,
-  ThumbsUp, ThumbsDown, BarChart3,
+  ThumbsUp, ThumbsDown, BarChart3, Cpu, Zap, Download,
 } from "lucide-react";
 import DataVisualization from "./DataVisualization";
+import AgentSteps from "./AgentSteps";
 
 export default function MessageBubble({ message, onFeedback }) {
   const isUser = message.role === "user";
@@ -68,11 +69,23 @@ export default function MessageBubble({ message, onFeedback }) {
                 <X size={10} /> Error
               </span>
             )}
+
+            {/* Agent mode badge */}
+            {message.agent_mode === "react" ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-violet-400/10 border border-violet-300/15 rounded-full text-[11px] text-violet-300">
+                <Cpu size={10} /> Agentic · {message.agent_steps?.length ?? 0} steps
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-[rgba(102,217,239,0.08)] border border-[rgba(102,217,239,0.12)] rounded-full text-[11px] text-[var(--accent)]">
+                <Zap size={10} /> Pipeline
+              </span>
+            )}
+
             {m && (
               <>
                 <span className="inline-flex items-center gap-1 text-[11px] text-[var(--text-3)]">
                   <Clock size={10} />
-                  {m.total_latency_ms.toLocaleString()}ms total
+                  {m.total_latency_ms.toLocaleString()}ms
                 </span>
                 {m.query_type && (
                   <span className="px-2 py-1 bg-[rgba(102,217,239,0.12)] border border-[rgba(102,217,239,0.12)] rounded-full text-[10px] text-[var(--accent)] uppercase tracking-[0.12em]">
@@ -82,6 +95,11 @@ export default function MessageBubble({ message, onFeedback }) {
                 {m.retry_count > 0 && (
                   <span className="px-2 py-1 bg-amber-400/10 border border-amber-300/10 rounded-full text-[10px] text-amber-200 uppercase tracking-[0.12em]">
                     {m.retry_count} retry
+                  </span>
+                )}
+                {m.cache_hit && (
+                  <span className="px-2 py-1 bg-sky-400/10 border border-sky-300/10 rounded-full text-[10px] text-sky-300 uppercase tracking-[0.12em]">
+                    cache {m.cache_type}
                   </span>
                 )}
               </>
@@ -140,6 +158,17 @@ export default function MessageBubble({ message, onFeedback }) {
               </button>
             )}
 
+            {/* Export CSV */}
+            {message.data?.columns && (
+              <button
+                onClick={() => exportCsv(message)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-3)] hover:text-[var(--text-1)] hover:bg-[rgba(255,255,255,0.04)] transition-all"
+                title="Download results as CSV"
+              >
+                <Download size={12} /> CSV
+              </button>
+            )}
+
             {/* Trace ID */}
             <span className="ml-auto text-[10px] text-[var(--text-3)]/70 font-mono">
               {message.trace_id.slice(0, 12)}...
@@ -170,11 +199,40 @@ export default function MessageBubble({ message, onFeedback }) {
         {/* Metrics panel */}
         {showMetrics && m && <MetricsPanel metrics={m} />}
 
-        {/* Visualization only; raw SQL/data stay out of the main chat output */}
+        {/* ReAct agent steps */}
+        {message.agent_steps && message.agent_steps.length > 0 && (
+          <AgentSteps steps={message.agent_steps} />
+        )}
+
+        {/* Visualization */}
         {message.visualization && <DataVisualization visualization={message.visualization} />}
       </div>
     </div>
   );
+}
+
+
+async function exportCsv(message) {
+  try {
+    const res = await fetch("/api/export/csv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        columns: message.data.columns,
+        rows: message.data.rows,
+        filename: `query_${Date.now()}.csv`,
+      }),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `query_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    // silent fail — user will notice the download didn't start
+  }
 }
 
 
@@ -190,6 +248,8 @@ function MetricsPanel({ metrics: m }) {
         {m.result_rows != null && <Metric label="Result Rows" value={m.result_rows.toLocaleString()} />}
         {m.result_columns != null && <Metric label="Result Columns" value={m.result_columns} />}
         <Metric label="Retries" value={m.retry_count} highlight={m.retry_count > 0} />
+        {m.steps_taken != null && <Metric label="Agent Steps" value={m.steps_taken} />}
+        {m.tokens_saved > 0 && <Metric label="Tokens Saved" value={m.tokens_saved.toLocaleString()} />}
         {m.query_type && <Metric label="Query Type" value={m.query_type} />}
 
         {m.join_count != null && <Metric label="Joins" value={m.join_count} />}

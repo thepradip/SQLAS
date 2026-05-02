@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { BarChart3, LineChart, PieChart, Hash } from "lucide-react";
+import { BarChart3, LineChart, PieChart, Hash, ScatterChart } from "lucide-react";
 
 const PALETTE = ["#66d9ef", "#80ffd3", "#7bb8ff", "#f5be6b", "#ff8e7a", "#9ca8ff", "#5fe0a9", "#b3f1ff"];
 
@@ -15,6 +15,7 @@ export default function DataVisualization({ visualization }) {
     bar: <BarChart3 size={13} />,
     line: <LineChart size={13} />,
     pie: <PieChart size={13} />,
+    scatter: <ScatterChart size={13} />,
   }[type] || <BarChart3 size={13} />;
 
   return (
@@ -37,6 +38,7 @@ export default function DataVisualization({ visualization }) {
         {type === "bar" && <BarChartCard visualization={visualization} />}
         {type === "line" && <LineChartCard visualization={visualization} />}
         {type === "pie" && <PieChartCard visualization={visualization} />}
+        {type === "scatter" && <ScatterChartCard visualization={visualization} />}
       </div>
     </div>
   );
@@ -192,6 +194,64 @@ function PieChartCard({ visualization }) {
       </div>
     </div>
   );
+}
+
+function ScatterChartCard({ visualization }) {
+  const points = visualization.points || [];
+  const svgW = 640, svgH = 320, padX = 56, padY = 32;
+  const innerW = svgW - padX * 2;
+  const innerH = svgH - padY * 2 - 20;
+
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+
+  const toSvg = (p) => ({
+    cx: padX + ((p.x - minX) / rangeX) * innerW,
+    cy: padY + innerH - ((p.y - minY) / rangeY) * innerH,
+  });
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full h-auto">
+        <rect x="0" y="0" width={svgW} height={svgH} rx="16" fill="#07111f" />
+        {[0, 1, 2, 3].map((i) => (
+          <line key={`gy${i}`} x1={padX} x2={svgW - padX} y1={padY + (i * innerH) / 3} y2={padY + (i * innerH) / 3} stroke="rgba(125,168,214,0.14)" strokeWidth="1" />
+        ))}
+        {[0, 1, 2, 3].map((i) => (
+          <line key={`gx${i}`} x1={padX + (i * innerW) / 3} x2={padX + (i * innerW) / 3} y1={padY} y2={padY + innerH} stroke="rgba(125,168,214,0.14)" strokeWidth="1" />
+        ))}
+        {points.map((p, i) => {
+          const { cx, cy } = toSvg(p);
+          return (
+            <circle key={i} cx={cx} cy={cy} r="5" fill={PALETTE[i % PALETTE.length]} opacity="0.88" stroke="#07111f" strokeWidth="1.5" />
+          );
+        })}
+        <text x={padX} y={svgH - 4} fontSize="10" fill="#4a6080">{formatCompact(minX)}</text>
+        <text x={svgW - padX} y={svgH - 4} textAnchor="end" fontSize="10" fill="#4a6080">{formatCompact(maxX)}</text>
+        <text x={8} y={padY + innerH} fontSize="10" fill="#4a6080">{formatCompact(minY)}</text>
+        <text x={8} y={padY} fontSize="10" fill="#4a6080">{formatCompact(maxY)}</text>
+        <text x={svgW / 2} y={svgH - 4} textAnchor="middle" fontSize="11" fill="#6f849c">{_pretty(visualization.x_key)}</text>
+      </svg>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {points.slice(0, 8).map((p, i) => (
+          <div key={i} className="rounded-xl border border-[rgba(125,168,214,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+            <div className="text-[11px] text-[var(--text-3)] truncate" title={p.label}>{p.label}</div>
+            <div className="mt-1 text-xs text-[var(--text-2)]">
+              x: {formatCompact(p.x)} · y: {formatCompact(p.y)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function _pretty(key) {
+  return (key || "").replace(/_/g, " ").trim();
 }
 
 function buildLinePoints(values) {
