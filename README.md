@@ -81,41 +81,53 @@ python ingest.py && uvicorn main:app --reload
 | GET | `/schema` | Full auto-discovered schema context |
 | POST | `/query` | NL → SQL → Execute → Narrate |
 | POST | `/feedback` | Thumbs up/down — teaches the few-shot cache |
-| POST | `/feedback/detailed` | Multi-dimension rating (accuracy, relevance, SQL) |
-| POST | `/export/csv` | Download query results as CSV |
+| POST | `/feedback/detailed` | Multi-dimension rating |
+| POST | `/export/csv` | Download results as CSV |
 | GET | `/cache/stats` | Hit rates, tokens saved, cost savings |
-| DELETE | `/cache/results` | Flush SQL result cache after data updates |
-| DELETE | `/cache/all` | Wipe full cache |
+| DELETE | `/cache/results` | Flush result cache after data updates |
 | POST | `/evaluate` | Run SQLAS evaluation suite |
 | DELETE | `/conversations/{id}` | Clear conversation history |
 
-### Query request
+---
 
-```json
-{
-  "query": "Which stress + smoking combination has the highest BP abnormality rate?",
-  "conversation_id": "session-abc",
-  "force_agentic": false
-}
+## Evaluation — SQLAS v2.0
+
+```bash
+python backend/eval_runner.py --quick                                    # 5 test cases
+python backend/eval_runner.py                                            # 28 test cases
+python backend/eval_runner.py --provider anthropic:claude-opus-4-7      # test a specific LLM
+python backend/eval_runner.py --compare azure,anthropic:claude-opus-4-7,ollama:sqlcoder --quick
 ```
 
-### Query response
+45 metrics across 9 dimensions — correctness, agentic quality, cache ROI, safety, faithfulness:
 
-```json
-{
-  "sql": "SELECT Smoking, Level_of_Stress, ROUND(...) AS rate FROM ...",
-  "data": { "columns": [...], "rows": [...], "row_count": 6, "execution_time_ms": 2.1 },
-  "response": "High-stress smokers have the highest BP abnormality rate at 73.4%.",
-  "agent_mode": "pipeline",
-  "agent_steps": null,
-  "metrics": {
-    "total_latency_ms": 4210,
-    "cache_hit": false,
-    "tokens_saved": 0
-  },
-  "visualization": { "type": "bar", "title": "BP Abnormality Rate by Risk Group" }
-}
-```
+| Dimension | Weight |
+|-----------|--------|
+| Execution Accuracy | 25% |
+| Semantic Correctness | 10% |
+| **Agentic Quality** (planning, grounding, steps) | **10%** |
+| Context Quality (RAGAS-mapped) | 8% |
+| Cost Efficiency (VES, scan, SQL quality) | 10% |
+| Task Success (faithfulness, relevance) | 8% |
+| Result + Visualization | 7% |
+| Guardrails (read-only, injection, PII) | 15% |
+| Execution Quality | 7% |
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Agent | Custom ReAct loop — tool calling, MLflow tracing |
+| Schema retrieval | BM25 + dense embeddings + Reciprocal Rank Fusion |
+| Semantic cache | SQLite-backed L1/L2/L4, verified few-shot learning |
+| Evaluation | [SQLAS v2.0](https://pypi.org/project/sqlas/) — 45 metrics, 9 categories |
+| LLM | Azure OpenAI · OpenAI · Anthropic · Ollama · any compatible |
+| Backend | FastAPI + SQLAlchemy async |
+| Frontend | React 18 + Vite + Tailwind CSS |
+| Observability | MLflow — traces, spans, feedback |
+| Database | SQLite · PostgreSQL · MySQL (any SQLAlchemy async URL) |
 
 ---
 
