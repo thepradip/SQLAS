@@ -46,14 +46,25 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 - **FK-graph-aware** table selection — JOIN-required tables always included
 - **Token budget control** — injects only 8-12 relevant tables per query (not all 100+)
 - Schema stats cached to disk — instant restart after first run
-- Automatic switch to semantic index above `LARGE_SCHEMA_THRESHOLD` (default 20 tables)
 
-| Database size | Startup | Tokens injected | Works? |
+---
+
+## Semantic Query Cache
+
+Three cache levels — after warmup, 60-80% of queries never reach the LLM:
+
+| Level | Mechanism | Latency | Tokens saved |
 |---|---|---|---|
-| 5 tables | ~1s | full schema | ✅ |
-| 50 tables | 1s (cached) | ~10K tokens | ✅ |
-| 200 tables | 1s (cached) | ~12K tokens | ✅ |
-| 500 tables | 1s (cached) | ~15K tokens | ✅ |
+| L1 | Exact hash match | <1ms | ~9,500 (~$0.047) |
+| L2 | Semantic cosine ≥ 0.92 | ~5ms | ~8,600 (~$0.043) |
+| L4 | SQL result TTL (5 min) | <1ms | DB execution time |
+
+**Learning loop** — user thumbs-up marks a query as *verified*. Verified queries are injected as few-shot examples into future similar queries, improving SQL accuracy over time without retraining.
+
+```
+GET /cache/stats  →  hit_rate, tokens_saved, cost_saved_usd, top_queries
+DELETE /cache/results  →  flush result cache after data updates
+```
 
 ---
 
