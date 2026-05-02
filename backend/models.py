@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class QueryRequest(BaseModel):
     query: str
     conversation_id: str | None = None
+    force_agentic: bool = False
 
 
 class QueryMetrics(BaseModel):
@@ -22,6 +23,13 @@ class QueryMetrics(BaseModel):
     result_columns: int | None = None
     success: bool
     error_type: str | None = None
+    # Cache metadata
+    cache_hit: bool = False
+    cache_type: str | None = None        # "exact" | "semantic" | None
+    cache_similarity: float | None = None
+    tokens_saved: int = 0
+    # Agentic mode metadata
+    steps_taken: int | None = None       # ReAct steps used (None = pipeline mode)
     # SQL complexity
     sql_length: int | None = None
     join_count: int | None = None
@@ -73,6 +81,8 @@ class QueryResponse(BaseModel):
     trace_id: str | None = None
     metrics: QueryMetrics | None = None
     visualization: QueryVisualization | None = None
+    agent_mode: str = "pipeline"          # "pipeline" | "react"
+    agent_steps: list[dict] | None = None  # ReAct tool call trace for UI display
 
 
 class FeedbackRequest(BaseModel):
@@ -100,3 +110,9 @@ class HealthCheck(BaseModel):
 
 class SchemaResponse(BaseModel):
     schema_text: str
+
+
+class ExportRequest(BaseModel):
+    columns: list[str]
+    rows: list[list]
+    filename: str = "query_results.csv"
