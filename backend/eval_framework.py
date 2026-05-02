@@ -14,19 +14,38 @@ import re
 import time
 import sqlite3
 from dataclasses import dataclass, field, asdict
+from typing import Optional
 
 import sqlglot
 from openai import AzureOpenAI
 
 from config import get_settings
+from llm_providers import LLMProvider
 
 settings = get_settings()
 
-client = AzureOpenAI(
+# Default judge client (Azure OpenAI) — used as fallback when no provider is injected.
+# Always use a strong, stable model as judge regardless of what LLM is being tested.
+_azure_client = AzureOpenAI(
     azure_endpoint=settings.azure_openai_endpoint,
     api_key=settings.azure_openai_api_key,
     api_version=settings.azure_openai_api_version,
 )
+
+# Injectable judge provider — set via init_eval_judge() before running evaluations.
+# Defaults to Azure OpenAI for backward compatibility.
+_judge_provider: Optional[LLMProvider] = None
+
+
+def init_eval_judge(provider: Optional[LLMProvider] = None) -> None:
+    """
+    Set the LLM used for all LLM-as-Judge scoring (faithfulness, relevance, etc.).
+    Call this before run_evaluation() when you want to use a specific judge.
+    Best practice: always use a strong, fixed judge (e.g. Azure GPT-4o or Claude Opus)
+    regardless of which LLM is being tested — self-judging biases results.
+    """
+    global _judge_provider
+    _judge_provider = provider
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -67,8 +86,20 @@ class SQLASScores:
     read_only_compliance: float = 0.0        # No DDL/DML detected
     safety_score: float = 0.0               # PII protection, no restricted access
 
+    # ── 6. Cache & Efficiency ─────────────────────────────────────────────
+    cache_hit: bool = False
+    cache_type: str = ""
+    tokens_saved: int = 0
+    few_shot_examples_used: int = 0
+
+    # ── 7. Agentic metrics (informational) ───────────────────────────────
+    agent_mode: str = "pipeline"             # "pipeline" | "react"
+    steps_taken: int = 0                     # tool calls made in ReAct loop
+    planning_quality: float = 0.0            # LLM judge: was the plan efficient?
+    tool_use_efficiency: float = 0.0         # steps used / min steps needed
+
     # ── Composite ────────────────────────────────────────────────────────
-    overall_score: float = 0.0               # Production-weighted average
+    overall_score: float = 0.0
     details: dict = field(default_factory=dict)
 
 
@@ -147,14 +178,17 @@ def eval_schema_compliance(sql: str, valid_tables: set[str], valid_columns: dict
 
 
 def eval_read_only(sql: str) -> float:
-    """Verify no DDL/DML statements."""
-    forbidden = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
-                 "TRUNCATE", "GRANT", "REVOKE", "ATTACH", "DETACH"]
-    upper = sql.upper()
-    for kw in forbidden:
-        if re.search(rf"\b{kw}\b", upper):
-            return 0.0
-    return 1.0
+    """
+    AST-level read-only validation using sqlglot.
+    Replaces the previous keyword-regex approach which could be bypassed
+    by write operations buried in CTEs or after SQL comments.
+    """
+    try:
+        from database import _validate_readonly_sql
+        _validate_readonly_sql(sql)
+        return 1.0
+    except ValueError:
+        return 0.0
 
 
 def _extract_row_numbers(row) -> list[float]:
@@ -384,8 +418,14 @@ def eval_execution_result(result_data: dict | None, expected_nonempty: bool) -> 
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _llm_judge(prompt: str) -> str:
-    """Send a judging prompt to the LLM."""
-    response = client.chat.completions.create(
+    """
+    Send a judging prompt to the configured judge LLM.
+    Uses the injected provider if set, otherwise falls back to Azure OpenAI directly.
+    """
+    if _judge_provider is not None:
+        return _judge_provider.complete([{"role": "user", "content": prompt}], max_tokens=1000)
+    # Fallback: direct Azure OpenAI call (backward compatible)
+    response = _azure_client.chat.completions.create(
         model=settings.azure_openai_deployment_name,
         messages=[{"role": "user", "content": prompt}],
         max_completion_tokens=1000,
@@ -815,6 +855,105 @@ def eval_safety(sql: str, narration: str) -> tuple[float, dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CACHE & FEW-SHOT METRICS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def eval_agentic_quality(agent_result: dict) -> dict:
+    """
+    Evaluate agentic behaviour from the result metadata.
+    - agent_mode: "react" | "pipeline"
+    - steps_taken: how many tool calls the ReAct loop used
+    - tool_use_efficiency: 1.0 if steps_taken <= 3 (ideal), degrades above 6
+    - planning_quality: LLM judge on the step sequence (only for react mode)
+    """
+    steps = agent_result.get("steps") or []
+    mode = "react" if steps else "pipeline"
+    n_steps = len(steps)
+
+    # Efficiency: penalise if agent took more than 5 steps
+    if mode == "pipeline":
+        efficiency = 1.0
+    elif n_steps <= 3:
+        efficiency = 1.0
+    elif n_steps <= 5:
+        efficiency = 0.8
+    elif n_steps <= 7:
+        efficiency = 0.6
+    else:
+        efficiency = 0.3
+
+    planning_score = 0.0
+    if mode == "react" and steps:
+        step_summary = "\n".join(
+            f"Step {s['step']}: {s['tool']}({list(s.get('args', {}).keys())})"
+            for s in steps
+        )
+        prompt = f"""You are evaluating an AI SQL agent's planning quality.
+
+The agent was asked: "{agent_result.get('response', 'unknown query')[:200]}"
+
+Steps taken:
+{step_summary}
+
+Evaluate:
+1. Did the agent explore the schema before writing SQL (good planning)?
+2. Did it avoid redundant or unnecessary steps?
+3. Did it use the right tools in a logical order?
+
+Score 0.0–1.0:
+- 1.0: Perfect plan — minimal steps, logical order, schema check before SQL
+- 0.7: Good plan with minor inefficiencies
+- 0.4: Acceptable but some wasted steps
+- 0.0: Poor planning — jumped straight to SQL without schema inspection
+
+Respond EXACTLY:
+Planning_Quality: [score]
+Reasoning: [one sentence]"""
+        try:
+            result = _llm_judge(prompt)
+            for line in result.strip().split("\n"):
+                if line.startswith("Planning_Quality:"):
+                    planning_score = float(
+                        __import__("re").search(r"[\d.]+", line.split(":")[-1]).group()
+                    )
+                    break
+        except Exception:
+            planning_score = 0.5
+
+    return {
+        "agent_mode": mode,
+        "steps_taken": n_steps,
+        "tool_use_efficiency": efficiency,
+        "planning_quality": planning_score,
+        "step_tools": [s["tool"] for s in steps],
+    }
+
+
+def eval_cache_performance(agent_result: dict) -> dict:
+    """
+    Extract cache metadata from agent result metrics.
+    Not included in the weighted overall score (a cache miss on run #1 is expected),
+    but logged separately for ROI tracking.
+    """
+    metrics = agent_result.get("metrics") or {}
+    return {
+        "cache_hit":    metrics.get("cache_hit", False),
+        "cache_type":   metrics.get("cache_type", ""),
+        "tokens_saved": metrics.get("tokens_saved", 0),
+        "latency_ms":   metrics.get("total_latency_ms", 0),
+    }
+
+
+def eval_few_shot_injection(agent_result: dict) -> int:
+    """
+    Count how many few-shot examples were injected for this query.
+    Requires the agent to expose this in metrics (add if needed).
+    """
+    metrics = agent_result.get("metrics") or {}
+    return metrics.get("few_shot_count", 0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PRODUCTION COMPOSITE SCORING
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -977,6 +1116,26 @@ async def evaluate_single(
     safety, safety_details = eval_safety(sql, narration)
     scores.safety_score = safety
     scores.details["safety"] = safety_details
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 6. CACHE & FEW-SHOT (informational — not in weighted score)
+    # ══════════════════════════════════════════════════════════════════════
+    cache_perf = eval_cache_performance(agent_result)
+    scores.cache_hit = cache_perf["cache_hit"]
+    scores.cache_type = cache_perf["cache_type"]
+    scores.tokens_saved = cache_perf["tokens_saved"]
+    scores.few_shot_examples_used = eval_few_shot_injection(agent_result)
+    scores.details["cache"] = cache_perf
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 7. AGENTIC QUALITY (informational)
+    # ══════════════════════════════════════════════════════════════════════
+    agentic = eval_agentic_quality(agent_result)
+    scores.agent_mode = agentic["agent_mode"]
+    scores.steps_taken = agentic["steps_taken"]
+    scores.tool_use_efficiency = agentic["tool_use_efficiency"]
+    scores.planning_quality = agentic["planning_quality"]
+    scores.details["agentic"] = agentic
 
     # ══════════════════════════════════════════════════════════════════════
     # PRODUCTION COMPOSITE SCORE
