@@ -64,65 +64,57 @@ AST-based read-only (sqlglot) · query timeout · fetchmany OOM protection · pe
 
 ## Quick Start
 
-### 1. Clone
-
 ```bash
-git clone https://github.com/thepradip/AriaSQL.git
-cd AriaSQL
+git clone https://github.com/thepradip/AriaSQL.git && cd AriaSQL
+cd backend && pip install -r requirements.txt && cp .env.example .env
+python ingest.py && uvicorn main:app --reload
+# frontend: cd frontend && npm install && npm run dev
 ```
-
-### 2. Backend
-
-```bash
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env
-# Edit .env — minimum: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME
-
-python ingest.py      # load sample health data
-uvicorn main:app --reload
-```
-
-API: `http://localhost:8000` · Docs: `http://localhost:8000/docs`
-
-### 3. Frontend
-
-```bash
-cd frontend && npm install && npm run dev
-```
-
-UI: `http://localhost:5173`
 
 ---
 
-## Configuration
+## API Reference
 
-```env
-# Required
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your-key
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
-DATABASE_URL=sqlite+aiosqlite:///./health.db
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | DB status, table count, MLflow experiment |
+| GET | `/schema` | Full auto-discovered schema context |
+| POST | `/query` | NL → SQL → Execute → Narrate |
+| POST | `/feedback` | Thumbs up/down — teaches the few-shot cache |
+| POST | `/feedback/detailed` | Multi-dimension rating (accuracy, relevance, SQL) |
+| POST | `/export/csv` | Download query results as CSV |
+| GET | `/cache/stats` | Hit rates, tokens saved, cost savings |
+| DELETE | `/cache/results` | Flush SQL result cache after data updates |
+| DELETE | `/cache/all` | Wipe full cache |
+| POST | `/evaluate` | Run SQLAS evaluation suite |
+| DELETE | `/conversations/{id}` | Clear conversation history |
 
-# Alternative LLM providers
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-OLLAMA_BASE_URL=http://localhost:11434
+### Query request
 
-# Agentic + cache
-AGENTIC_MODE=true
-CACHE_ENABLED=true
-SEMANTIC_CACHE_THRESHOLD=0.92
-RESULT_CACHE_TTL=300
+```json
+{
+  "query": "Which stress + smoking combination has the highest BP abnormality rate?",
+  "conversation_id": "session-abc",
+  "force_agentic": false
+}
+```
 
-# Large schema (100+ tables)
-LARGE_SCHEMA_THRESHOLD=20
-MAX_CONTEXT_TABLES=8
-SCHEMA_TOKEN_BUDGET=12000
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=   # upgrade to hybrid BM25+embedding
+### Query response
+
+```json
+{
+  "sql": "SELECT Smoking, Level_of_Stress, ROUND(...) AS rate FROM ...",
+  "data": { "columns": [...], "rows": [...], "row_count": 6, "execution_time_ms": 2.1 },
+  "response": "High-stress smokers have the highest BP abnormality rate at 73.4%.",
+  "agent_mode": "pipeline",
+  "agent_steps": null,
+  "metrics": {
+    "total_latency_ms": 4210,
+    "cache_hit": false,
+    "tokens_saved": 0
+  },
+  "visualization": { "type": "bar", "title": "BP Abnormality Rate by Risk Group" }
+}
 ```
 
 ---
