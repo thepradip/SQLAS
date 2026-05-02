@@ -33,54 +33,97 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 
 - **ReAct loop** — Reason → call tool → observe result → repeat until confident
 - **4 tools**: `list_tables`, `describe_table`, `execute_sql`, `final_answer`
-- Agent inspects schema before querying — no hallucinated column names
 - Auto-routing: complex queries use ReAct; simple queries use fast pipeline
 
 ---
 
 ## Intelligent Schema Retrieval (100+ tables)
 
-- **BM25 + dense embedding hybrid search** with Reciprocal Rank Fusion
-- **FK-graph-aware** table selection, token budget control, disk-cached stats
+BM25 + dense embedding hybrid search with RRF. FK-graph-aware. Token budget control.
 
 ---
 
 ## Semantic Query Cache
 
-L1 exact → L2 semantic → L4 result TTL. 60-80% cache hit rate after warmup.
-Learning loop: thumbs-up → verified few-shot examples improve future queries.
+L1 exact → L2 semantic → L4 result TTL. Learning loop from user feedback.
 
 ---
 
 ## Any LLM, Any Database
 
-**LLM providers** — swap without changing any business logic:
-
-```env
-# Use one of:
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o          # Azure OpenAI (default)
-OPENAI_API_KEY=sk-...                         # OpenAI direct
-ANTHROPIC_API_KEY=sk-ant-...                  # Anthropic Claude
-OLLAMA_BASE_URL=http://localhost:11434        # Local models (Llama, SQLCoder)
-```
-
-**Databases** — any SQLAlchemy-compatible URL:
-
-```env
-DATABASE_URL=sqlite+aiosqlite:///./my.db
-DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
-DATABASE_URL=mysql+aiomysql://user:pass@host:3306/dbname
-```
+Azure OpenAI · OpenAI · Anthropic · Ollama · any compatible endpoint.
+SQLite · PostgreSQL · MySQL · any SQLAlchemy async URL.
 
 ---
 
 ## Production Safety
 
-- **AST-based read-only** via sqlglot — blocks write ops inside CTEs, not just keywords
-- **Query timeout** — configurable (default 30s), enforced via `asyncio.wait_for`
-- **Memory-safe** — `fetchmany()` bounds result sets, no OOM on large tables
-- **Persistent conversations** — SQLite-backed, survive server restarts
-- **SQL injection detection**, **PII access scoring**, **prompt injection** checks
+AST-based read-only (sqlglot) · query timeout · fetchmany OOM protection · persistent conversations.
+
+---
+
+## Quick Start
+
+### 1. Clone
+
+```bash
+git clone https://github.com/thepradip/AriaSQL.git
+cd AriaSQL
+```
+
+### 2. Backend
+
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env — minimum: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME
+
+python ingest.py      # load sample health data
+uvicorn main:app --reload
+```
+
+API: `http://localhost:8000` · Docs: `http://localhost:8000/docs`
+
+### 3. Frontend
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+UI: `http://localhost:5173`
+
+---
+
+## Configuration
+
+```env
+# Required
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_API_VERSION=2024-12-01-preview
+DATABASE_URL=sqlite+aiosqlite:///./health.db
+
+# Alternative LLM providers
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Agentic + cache
+AGENTIC_MODE=true
+CACHE_ENABLED=true
+SEMANTIC_CACHE_THRESHOLD=0.92
+RESULT_CACHE_TTL=300
+
+# Large schema (100+ tables)
+LARGE_SCHEMA_THRESHOLD=20
+MAX_CONTEXT_TABLES=8
+SCHEMA_TOKEN_BUDGET=12000
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=   # upgrade to hybrid BM25+embedding
+```
 
 ---
 
