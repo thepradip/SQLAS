@@ -29,6 +29,28 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 
 ---
 
+## Agentic Reasoning
+
+- **ReAct loop** — Reason → call tool → observe result → repeat until confident
+- **4 tools**: `list_tables`, `describe_table`, `execute_sql`, `final_answer`
+- Agent inspects schema before querying — no hallucinated column names
+- Handles multi-step questions that require multiple SQL queries
+- Auto-routing: complex queries use ReAct; simple queries use fast pipeline
+- Every reasoning step visible in the UI and traced in MLflow
+
+```
+User Query
+    │
+    ├─ Simple (count, avg, filter) ──── Fast pipeline  → <2s
+    │
+    └─ Complex (correlate, compare, analyze)
+           │
+           ▼  ReAct Agent
+    list_tables → describe_table → execute_sql → (repeat) → final_answer
+```
+
+---
+
 ## License
 
 MIT — [Pradip Tivhale](https://github.com/thepradip)
