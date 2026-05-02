@@ -9,3 +9,4 @@ aiosqlite==0.20.0
 mlflow>=3.1.0
 sqlglot>=25.0.0
 greenlet>=3.1.1
+networkx>=3.0
