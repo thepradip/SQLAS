@@ -38,16 +38,22 @@ AriaSQL transforms natural language into SQL using a **ReAct agentic loop** — 
 - Auto-routing: complex queries use ReAct; simple queries use fast pipeline
 - Every reasoning step visible in the UI and traced in MLflow
 
-```
-User Query
-    │
-    ├─ Simple (count, avg, filter) ──── Fast pipeline  → <2s
-    │
-    └─ Complex (correlate, compare, analyze)
-           │
-           ▼  ReAct Agent
-    list_tables → describe_table → execute_sql → (repeat) → final_answer
-```
+---
+
+## Intelligent Schema Retrieval (100+ tables)
+
+- **BM25 + dense embedding hybrid search** with Reciprocal Rank Fusion (RRF)
+- **FK-graph-aware** table selection — JOIN-required tables always included
+- **Token budget control** — injects only 8-12 relevant tables per query (not all 100+)
+- Schema stats cached to disk — instant restart after first run
+- Automatic switch to semantic index above `LARGE_SCHEMA_THRESHOLD` (default 20 tables)
+
+| Database size | Startup | Tokens injected | Works? |
+|---|---|---|---|
+| 5 tables | ~1s | full schema | ✅ |
+| 50 tables | 1s (cached) | ~10K tokens | ✅ |
+| 200 tables | 1s (cached) | ~12K tokens | ✅ |
+| 500 tables | 1s (cached) | ~15K tokens | ✅ |
 
 ---
 
