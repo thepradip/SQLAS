@@ -287,14 +287,27 @@ class SchemaIndex:
             lines.append(f"- `{t}`: {cols} cols, {rows} rows{fk_str}")
         return "\n".join(lines)
 
-    def focused_context(self, table_names: list[str], token_budget: int = 12_000) -> str:
+    def focused_context(
+        self,
+        table_names: list[str],
+        token_budget: int = 12_000,
+        query: str = "",
+    ) -> str:
         """
         Full schema + stats for the retrieved table subset.
-        Enforces a token budget — drops lowest-priority (last) tables if context is too large.
-        1 token ≈ 4 chars (rough estimate, conservative).
+
+        For tables with many columns, only the most query-relevant columns are
+        injected — keeps prompts tight even when individual tables have 100+ columns.
+        Column selection: PKs/FKs always included, rest scored by query overlap.
+
+        Enforces a token budget — drops lowest-priority (last) tables if still too large.
         """
+        max_cols = getattr(self._settings, "max_columns_per_table", 30)
         sections = [
-            _format_table_section(t, self._schema[t], self._col_stats.get(t, {}))
+            _format_table_section(
+                t, self._schema[t], self._col_stats.get(t, {}),
+                query=query, max_cols=max_cols,
+            )
             for t in table_names
             if t in self._schema
         ]
@@ -325,47 +338,172 @@ class SchemaIndex:
         return trimmed
 
 
-# ── Shared table formatter (also used by database.build_full_context) ──────────
+# ── Column relevance scoring ───────────────────────────────────────────────────
 
-def _format_table_section(table_name: str, info: dict, stats: dict) -> str:
+def _score_columns(query: str, columns: list[dict]) -> list[tuple[int, dict]]:
+    """
+    Score each column by relevance to the query.
+
+    Priority tiers (highest first):
+      4 — Primary key column (always needed for JOINs)
+      3 — Foreign key column (always needed for JOINs)
+      2 — Column name overlaps with query tokens
+      1 — Common analytical columns (date, status, type, name, amount, count)
+      0 — Everything else
+
+    Within each tier, longer token overlap wins.
+    """
+    query_tokens = set(re.sub(r"[^a-z0-9]", " ", query.lower()).split())
+    _ANALYTICAL = {"date","time","created","updated","status","type","name",
+                   "amount","total","count","value","code","flag","level","score"}
+
+    scored: list[tuple[int, dict]] = []
+    for col in columns:
+        name_lower = col["name"].lower()
+        col_tokens = set(re.sub(r"[^a-z0-9]", " ", name_lower).split())
+
+        if name_lower == "id" or name_lower.endswith("_id"):
+            tier = 4
+        elif col.get("_is_fk"):
+            tier = 3
+        elif query_tokens & col_tokens:
+            tier = 2 + len(query_tokens & col_tokens) * 0.1
+        elif col_tokens & _ANALYTICAL:
+            tier = 1
+        else:
+            tier = 0
+
+        scored.append((tier, col))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
+
+
+def _select_columns(
+    query: str,
+    columns: list[dict],
+    fk_col_names: set[str],
+    pk_names: set[str],
+    max_cols: int,
+) -> tuple[list[dict], int]:
+    """
+    Return (selected_columns, total_column_count).
+    Always includes PK + FK columns. Fills remaining slots with query-relevant columns.
+    """
+    total = len(columns)
+    if total <= max_cols:
+        return columns, total
+
+    # Mark FK columns for priority scoring
+    tagged = []
+    for col in columns:
+        c = dict(col)
+        c["_is_fk"] = col["name"].lower() in fk_col_names
+        tagged.append(c)
+
+    scored = _score_columns(query, tagged)
+
+    # Always keep PKs and FKs regardless of budget
+    must = [c for _, c in scored if c["name"].lower() in pk_names or c.get("_is_fk")]
+    rest = [c for _, c in scored if c["name"].lower() not in pk_names and not c.get("_is_fk")]
+
+    selected = must + rest[: max(0, max_cols - len(must))]
+    # Strip internal tag
+    for c in selected:
+        c.pop("_is_fk", None)
+
+    return selected[:max_cols], total
+
+
+# ── Shared table formatter ──────────────────────────────────────────────────────
+
+def _format_table_section(
+    table_name: str,
+    info: dict,
+    stats: dict,
+    query: str = "",
+    max_cols: int = 0,          # 0 = no limit (show all)
+) -> str:
+    """
+    Format a single table section for LLM context injection.
+
+    When max_cols > 0 and the table has more columns than the limit,
+    only the most query-relevant columns are shown. PKs and FK columns
+    are always included regardless of the limit.
+
+    This keeps per-table token cost bounded even for wide tables (200+ cols).
+    """
     row_count = info.get("row_count", "?")
-    if isinstance(row_count, int):
-        header = f"## Table: `{table_name}` ({row_count:,} rows)"
+    all_columns = info.get("columns", [])
+    total_cols = len(all_columns)
+
+    # ── Column selection ──────────────────────────────────────────────────────
+    pk_names   = {c.lower() for c in info.get("primary_key", [])}
+    fk_col_names = {
+        col.lower()
+        for fk in info.get("foreign_keys", [])
+        for col in fk.get("constrained_columns", fk.get("columns", []))
+    }
+
+    if max_cols > 0 and total_cols > max_cols:
+        shown_cols, _ = _select_columns(query, all_columns, fk_col_names, pk_names, max_cols)
+        hidden = total_cols - len(shown_cols)
     else:
-        header = f"## Table: `{table_name}`"
+        shown_cols = all_columns
+        hidden = 0
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    rows_str = f"{row_count:,}" if isinstance(row_count, int) else str(row_count)
+    col_note = f"{len(shown_cols)}/{total_cols} cols" if hidden else f"{total_cols} cols"
+    header = f"## Table: `{table_name}` ({rows_str} rows, {col_note})"
 
     lines = [header]
 
     if info.get("primary_key"):
         lines.append(f"**PK:** {', '.join(info['primary_key'])}")
 
+    # ── Column table ──────────────────────────────────────────────────────────
     lines += ["| Column | Type | Nullable |", "|--------|------|----------|"]
-    for col in info["columns"]:
+    for col in shown_cols:
         lines.append(f"| `{col['name']}` | {col['type']} | {col['nullable']} |")
 
+    if hidden:
+        lines.append(
+            f"\n*[ {hidden} more columns not shown — name them explicitly in your question to include them ]*"
+        )
+
+    # ── Foreign keys ──────────────────────────────────────────────────────────
     if info.get("foreign_keys"):
         lines.append("\n**Foreign Keys:**")
         for fk in info["foreign_keys"]:
-            lines.append(
-                f"- `{', '.join(fk['columns'])}` → "
-                f"`{fk['referred_table']}({', '.join(fk['referred_columns'])})`"
-            )
+            cols_str = ", ".join(fk.get("columns", fk.get("constrained_columns", [])))
+            ref      = fk.get("referred_table", "?")
+            ref_cols = ", ".join(fk.get("referred_columns", []))
+            lines.append(f"- `{cols_str}` → `{ref}({ref_cols})`")
 
+    # ── Indexes ───────────────────────────────────────────────────────────────
     if info.get("indexes"):
         lines.append(f"\n**Indexes:** {', '.join(idx['name'] for idx in info['indexes'])}")
 
+    # ── Column stats — only for shown columns ─────────────────────────────────
+    shown_names = {c["name"] for c in shown_cols}
     if stats:
-        lines.append("\n**Column Stats:**")
+        stat_lines = []
         for col_name, st in stats.items():
+            if col_name not in shown_names:
+                continue          # skip hidden columns
             if st.get("type") == "numeric":
-                lines.append(
+                stat_lines.append(
                     f"- `{col_name}`: min={st['min']}, max={st['max']}, "
-                    f"avg={st['avg']}, distinct={st['distinct']}, nulls={st['nulls']}"
+                    f"avg={st['avg']}, nulls={st['nulls']}"
                 )
             elif st.get("type") == "categorical":
                 top = ", ".join(f"{v}({c})" for v, c in st.get("top_values", [])[:5])
-                lines.append(
+                stat_lines.append(
                     f"- `{col_name}`: distinct={st['distinct']}, nulls={st['nulls']}, top=[{top}]"
                 )
+        if stat_lines:
+            lines.append("\n**Column Stats:**")
+            lines.extend(stat_lines)
 
     return "\n".join(lines)

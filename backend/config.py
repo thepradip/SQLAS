@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # How many tables to retrieve per query (FK expansion adds up to +4 neighbors).
     max_context_tables: int = 8
 
+    # Max columns injected per table into the LLM prompt.
+    # For wide tables (100+ cols) only the most query-relevant columns are shown.
+    # PKs and FK columns are always included regardless of this limit.
+    # Set 0 to disable (inject all columns — not recommended for 50+ col tables).
+    max_columns_per_table: int = 30
+
     # Token budget for injected schema context (1 token ≈ 4 chars).
     # Prevents context window overflow on very large focused schemas.
     schema_token_budget: int = 12_000
