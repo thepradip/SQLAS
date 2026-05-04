@@ -1,17 +1,23 @@
 """
 Tool registry for the Agentic SQL Agent.
 
-Four tools are exposed to the LLM:
-  list_tables     — discover what tables exist
-  describe_table  — inspect a table's schema, stats, and sample rows
-  execute_sql     — run a read-only SQL query
-  final_answer    — terminate the ReAct loop with the final answer
+Five tools — in mandatory execution order:
 
-The LLM uses these tools in a ReAct loop:
-  Thought → call a tool → observe result → Thought → ... → final_answer
+  1. create_plan    — ALWAYS FIRST. Forces the agent to state its full strategy
+                      before touching the database. Prevents guessing column names.
 
-Keeping the tool set small forces the agent to be precise.
-A large tool set leads to decision paralysis and wasted steps.
+  2. list_tables    — discover available tables (use if plan needs table list)
+
+  3. describe_table — inspect exact column names, types, sample values
+                      MUST be called for every table before execute_sql
+
+  4. execute_sql    — run a read-only SQL query (only after plan + describe)
+
+  5. final_answer   — terminate the loop with the answer
+
+The forced planning step is the single biggest improvement for first-attempt
+success: the agent that plans explicitly gets column names right, identifies
+JOINs correctly, and avoids NULL traps before writing a single line of SQL.
 """
 
 import json
@@ -23,6 +29,48 @@ from database import execute_readonly_query, get_full_schema, get_all_col_stats_
 # ── OpenAI-format tool definitions ────────────────────────────────────────────
 
 TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "create_plan",
+            "description": (
+                "MANDATORY FIRST STEP — call this before any other tool. "
+                "Create a structured execution plan that states exactly what you will do. "
+                "This forces you to think through tables, JOINs, aggregations, and edge cases "
+                "before touching the database — the single most effective way to solve queries "
+                "correctly on the first attempt."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query_understanding": {
+                        "type": "string",
+                        "description": "What exactly is the user asking for? Restate it precisely.",
+                    },
+                    "tables_needed": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Table names you expect to use. Must describe_table each before execute_sql.",
+                    },
+                    "joins_needed": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "JOINs required, e.g. ['orders JOIN customers ON orders.customer_id = customers.id']. Empty if single-table query.",
+                    },
+                    "sql_approach": {
+                        "type": "string",
+                        "description": "SQL strategy: which aggregations, filters, GROUP BY, ORDER BY, CTEs you plan to use.",
+                    },
+                    "potential_issues": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Issues to watch for: NULL values, type casting, row explosion from bad JOINs, cardinality surprises.",
+                    },
+                },
+                "required": ["query_understanding", "tables_needed", "sql_approach"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -118,6 +166,8 @@ async def execute_tool(name: str, arguments: dict) -> str:
     Returns a compact, LLM-readable string — not raw Python objects.
     """
     try:
+        if name == "create_plan":
+            return _execute_plan(arguments)
         if name == "list_tables":
             return await _list_tables()
         if name == "describe_table":
@@ -127,6 +177,36 @@ async def execute_tool(name: str, arguments: dict) -> str:
         return f"Unknown tool: {name}"
     except Exception as e:
         return f"Tool error ({name}): {e}"
+
+
+def _execute_plan(args: dict) -> str:
+    """
+    Acknowledge the plan and return a confirmation that prompts the agent
+    to now execute it step by step.
+    """
+    tables  = args.get("tables_needed", [])
+    joins   = args.get("joins_needed", [])
+    approach = args.get("sql_approach", "")
+    issues  = args.get("potential_issues", [])
+
+    lines = [
+        "Plan acknowledged. Execute it now in this exact order:",
+        "",
+        f"  Tables: {', '.join(tables) if tables else 'none specified'}",
+        f"  Approach: {approach}",
+    ]
+    if joins:
+        lines.append(f"  JOINs: {'; '.join(joins)}")
+    if issues:
+        lines.append(f"  Watch for: {'; '.join(issues)}")
+    lines += [
+        "",
+        "NEXT STEPS:",
+        "  1. Call describe_table for EACH table in your plan.",
+        "  2. Only then call execute_sql with the verified column names.",
+        "  3. Call final_answer once you have real results.",
+    ]
+    return "\n".join(lines)
 
 
 async def _list_tables() -> str:
