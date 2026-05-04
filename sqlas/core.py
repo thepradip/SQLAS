@@ -403,6 +403,8 @@ class SQLASScores:
     planning_quality: float = 0.0         # LLM judge: was the reasoning sequence good?
     tool_use_accuracy: float = 0.0        # LLM judge: were right tools called?
     agentic_score: float = 0.0            # composite of above four
+    plan_compliance_score: float = 0.0   # did agent call create_plan before execute_sql?
+    first_attempt_score: float = 0.0     # did SQL succeed without retries?
 
     # 9. Cache Performance (informational)
     cache_hit: bool = False               # served from cache?
