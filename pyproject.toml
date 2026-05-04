@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqlas"
-version = "2.0.0"
+version = "2.4.0"
 description = "SQLAS — SQL Agent Scoring Framework. Production-grade evaluation for Text-to-SQL and Agentic SQL agents with guardrail, visualization, agentic quality, and cache performance metrics."
 readme = "README.md"
 license = "MIT"

@@ -261,7 +261,9 @@ class TestEvaluateWithExecuteFn:
         assert scores.execution_accuracy == 1.0
 
     def test_without_gold_sql_execute_fn_unused(self):
-        """Without gold_sql, execution_accuracy defaults to 1.0 if result_data present."""
+        """Without gold_sql, execution_accuracy is 0.5 (unverified) not 1.0.
+        v2.1.1 fix: was 1.0 — gave full marks even for wrong logic queries.
+        Now correctly signals that correctness cannot be verified without gold_sql."""
         scores = evaluate(
             question="count users",
             generated_sql="SELECT COUNT(*) FROM users",
@@ -269,7 +271,8 @@ class TestEvaluateWithExecuteFn:
             execute_fn=self.execute_fn,
             result_data={"columns": ["COUNT(*)"], "rows": [[5]], "row_count": 1, "execution_time_ms": 1.0},
         )
-        assert scores.execution_accuracy == 1.0
+        assert scores.execution_accuracy == 0.5
+        assert scores.details.get("execution_accuracy", {}).get("unverified") is True
 
 
 # ── evaluate_batch() with execute_fn ──────────────────────────────────────

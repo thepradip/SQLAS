@@ -1,5 +1,86 @@
 # Changelog
 
+## [2.4.0] - 2026-05-04
+
+### Added — Prompt versioning, schema retrieval quality
+
+**New module: `sqlas/prompt_registry.py`**
+- `PromptRegistry.register(prompt_text, version_id, description)` — version your SQL agent prompts
+- `PromptRegistry.record(version_id, scores)` — tag every evaluation with its active prompt version
+- `PromptRegistry.compare(v1, v2)` — head-to-head comparison with per-metric deltas
+- `PromptRegistry.detect_regression(version_id, window, threshold)` — fires when recent scores drop vs baseline
+- `PromptRegistry.improvement_hints(version_id)` — data-driven prompt fix suggestions for failing metrics
+- Backed by SQLite WAL, in-memory for fast lookup
+
+**New module: `sqlas/schema_quality.py`**
+- `schema_retrieval_quality(retrieved_tables, generated_sql, gold_tables)` — precision, recall, F1 for schema index
+- `batch_retrieval_quality(evaluations)` — aggregate retrieval metrics across a test suite
+- FK-penalty: missing JOIN tables are penalised more than missing non-JOIN tables
+
+**New `SQLASScores` fields**
+- `schema_retrieval_f1`, `schema_retrieval_precision`, `schema_retrieval_recall`, `schema_retrieval_missing`
+- `prompt_id` — which prompt version produced this result
+
+**`evaluate()` new parameters**
+- `retrieved_tables` — enables schema retrieval scoring
+- `prompt_id` — tagged into scores for registry recording
+
+---
+
+## [2.3.0] - 2026-05-03
+
+### Added — Three-stage guardrails, feedback learning loop
+
+**New module: `sqlas/guardrails.py`**
+- `GuardrailPipeline.check_input(query)` — Stage 1: prompt injection, PII requests, malicious intent
+- `GuardrailPipeline.check_sql(sql, valid_tables, valid_columns)` — Stage 2: AST read-only, injection, PII column access
+- `GuardrailPipeline.check_sql_quality(question, sql, llm_judge)` — Stage 2b: optional LLM quality gate
+- `GuardrailPipeline.check_output(response, result_data)` — Stage 3: PII leakage, PII in result rows
+- `GuardrailPipeline.run_pipeline(...)` — runs all 3 stages, returns first blocked stage
+- `GuardrailResult` dataclass with stage, safe, score, issues, blocked, block_reason
+
+**New module: `sqlas/feedback.py`**
+- `FeedbackStore.store(FeedbackEntry)` — stores verified (question→SQL) pairs from thumbs-up
+- `FeedbackStore.get_gold_sql(question)` — auto-supplies gold SQL in `evaluate_correctness()`
+- `FeedbackEntry` dataclass: question, sql, is_correct, score, source, notes
+- `evaluate_correctness(feedback_store=store)` — auto-lookup eliminates manual gold_sql argument
+
+**New standalone evaluators**
+- `evaluate_correctness()` — only correctness metrics (1 LLM call)
+- `evaluate_quality()` — only quality metrics (6 LLM calls)
+- `evaluate_safety()` — zero LLM calls, pure regex + AST
+- Each returns its own typed result dataclass: `CorrectnessResult`, `QualityResult`, `SafetyResult`
+
+---
+
+## [2.2.0] - 2026-05-03
+
+### Added — Three-dimension scoring with AND verdict logic
+
+- Three independent composite scores: `correctness_score`, `quality_score`, `safety_composite_score`
+- `verdict` field: `PASS` only when all three exceed thresholds (0.5 / 0.6 / 0.9)
+- `WEIGHTS_CORRECTNESS`, `WEIGHTS_QUALITY`, `WEIGHTS_SAFETY` dicts
+- `compute_verdict(correctness, quality, safety)` — AND logic
+- `THRESHOLDS` dict — configurable per deployment
+- `overall_score` = 0.50×correctness + 0.30×quality + 0.20×safety (backward compat)
+
+---
+
+## [2.1.0] - 2026-05-02
+
+### Added — Large schema support (100+ tables)
+
+- `build_schema_info(db_path, execute_fn)` — auto-extract valid_tables + valid_columns from any DB
+- `_auto_schema_context(sql, valid_columns)` — injects only tables referenced in SQL (not all 100+)
+- `result_coverage(result_data, sql)` — truncation-aware metric: truncated GROUP BY = 0.3
+- `data_scan_efficiency` now uses `truncated` flag (not capped row_count) for row explosion detection
+- `run_suite()` — new `schema_context` param + `TestCase.schema_context` field
+
+### Fixed
+- `execution_accuracy` no longer returns 1.0 when no gold_sql provided — now 0.5 with `unverified=True`
+
+---
+
 ## [2.0.0] - 2026-04-30
 
 ### Added — Agentic SQL Agent support
