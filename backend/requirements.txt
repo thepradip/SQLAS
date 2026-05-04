@@ -5,8 +5,11 @@ openai>=1.61.0
 python-dotenv==1.0.1
 pydantic==2.10.4
 pydantic-settings==2.7.1
-aiosqlite==0.20.0
+aiosqlite==0.20.0        # SQLite async
+asyncpg>=0.29.0          # PostgreSQL async
+aiomysql>=0.2.0          # MySQL async
 mlflow>=3.1.0
 sqlglot>=25.0.0
 greenlet>=3.1.1
 networkx>=3.0
+chromadb>=1.0.0          # vector store
