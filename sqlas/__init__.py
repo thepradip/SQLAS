@@ -46,11 +46,12 @@ from sqlas.visualization import chart_data_alignment, chart_llm_validation, char
 from sqlas.agentic import (
     steps_efficiency, schema_grounding, planning_quality,
     tool_use_accuracy, agentic_score,
+    plan_compliance, first_attempt_success,
 )
 from sqlas.cache import cache_hit_score, tokens_saved_score, few_shot_score
 from sqlas.runner import run_suite
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
 __author__ = "SQLAS Contributors"
 
 __all__ = [

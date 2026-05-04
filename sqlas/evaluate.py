@@ -35,6 +35,8 @@ from sqlas.agentic import (
     agentic_score as _agentic_score,
     steps_efficiency as _steps_efficiency,
     schema_grounding as _schema_grounding,
+    plan_compliance as _plan_compliance,
+    first_attempt_success as _first_attempt_success,
 )
 from sqlas.cache import cache_hit_score, tokens_saved_score, few_shot_score
 
@@ -421,8 +423,20 @@ def evaluate(
         scores.agentic_score = ag_score
         scores.planning_quality = ag_details.get("planning_quality", 0.0)
         scores.details["agentic"] = ag_details
+
+        # Plan compliance — did agent call create_plan before execute_sql?
+        pc_score, pc_details = _plan_compliance(steps)
+        scores.plan_compliance_score = pc_score
+        scores.details["plan_compliance"] = pc_details
     else:
-        scores.agentic_score = 1.0   # pipeline mode not penalised by default
+        scores.agentic_score = 1.0
+        scores.plan_compliance_score = 1.0   # pipeline mode — no planning required
+
+    # First-attempt success — did SQL succeed without retries?
+    if agent_result:
+        fa_score, fa_details = _first_attempt_success(agent_result)
+        scores.first_attempt_score = fa_score
+        scores.details["first_attempt"] = fa_details
 
     # ── 9. Cache Performance (v2.0) ─────────────────────────────────────
     if agent_result:
