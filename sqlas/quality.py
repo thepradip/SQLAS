@@ -28,6 +28,7 @@ def sql_quality(
     Returns:
         (overall_score, {join_correctness, aggregation_accuracy, filter_accuracy, efficiency})
     """
+    schema_block = ("**Referenced Tables Schema:**\n" + schema_context[:1500]) if schema_context else ""
     prompt = f"""You are a senior SQL reviewer. Evaluate the quality of this SQL query.
 
 **User Question:** {question}
@@ -37,7 +38,7 @@ def sql_quality(
 {generated_sql}
 ```
 
-{f"**Schema:** {schema_context[:500]}" if schema_context else ""}
+{schema_block}
 
 Rate each 0.0-1.0:
 1. **Join_Correctness**: Are JOINs logically correct? (1.0 if no joins needed and none used)

@@ -14,7 +14,7 @@ import sqlite3
 
 import sqlglot
 
-from sqlas.core import LLMJudge, _parse_score
+from sqlas.core import LLMJudge, ExecuteFn, _parse_score
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,12 @@ def _match_result_sets(pred_rows: list, gold_rows: list) -> float:
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
-def execution_accuracy(generated_sql: str, gold_sql: str, db_path: str) -> tuple[float, dict]:
+def execution_accuracy(
+    generated_sql: str,
+    gold_sql: str,
+    db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
+) -> tuple[float, dict]:
     """
     Semantic execution accuracy.
 
@@ -110,27 +115,45 @@ def execution_accuracy(generated_sql: str, gold_sql: str, db_path: str) -> tuple
     Args:
         generated_sql: SQL produced by the agent
         gold_sql: Ground-truth SQL
-        db_path: Path to SQLite database (or any sqlite3-compatible path)
+        db_path: Path to SQLite database (backward-compatible)
+        execute_fn: Optional callable (sql: str) -> list[tuple].
+                    When provided, takes precedence over db_path and enables
+                    evaluation against any database (Postgres, MySQL, Snowflake, etc.)
 
     Returns:
         (score, details) where score is 0.0–1.0
     """
-    try:
-        conn = _connect_readonly(db_path)
-    except Exception as e:
-        return 0.0, {"error": f"db_connect_failed: {e}"}
-    try:
-        start = time.perf_counter()
-        gold_result = conn.execute(gold_sql).fetchall()
-        gold_time = max((time.perf_counter() - start) * 1000, 0.01)
+    if execute_fn is not None:
+        try:
+            start = time.perf_counter()
+            gold_result = list(execute_fn(gold_sql))
+            gold_time = max((time.perf_counter() - start) * 1000, 0.01)
 
-        start = time.perf_counter()
-        pred_result = conn.execute(generated_sql).fetchall()
-        pred_time = max((time.perf_counter() - start) * 1000, 0.01)
-    except Exception as e:
-        return 0.0, {"error": str(e)}
-    finally:
-        conn.close()
+            start = time.perf_counter()
+            pred_result = list(execute_fn(generated_sql))
+            pred_time = max((time.perf_counter() - start) * 1000, 0.01)
+        except Exception as e:
+            logger.warning("execute_fn failed in execution_accuracy: %s", e)
+            return 0.0, {"error": str(e)}
+    elif db_path is not None:
+        try:
+            conn = _connect_readonly(db_path)
+        except Exception as e:
+            return 0.0, {"error": f"db_connect_failed: {e}"}
+        try:
+            start = time.perf_counter()
+            gold_result = conn.execute(gold_sql).fetchall()
+            gold_time = max((time.perf_counter() - start) * 1000, 0.01)
+
+            start = time.perf_counter()
+            pred_result = conn.execute(generated_sql).fetchall()
+            pred_time = max((time.perf_counter() - start) * 1000, 0.01)
+        except Exception as e:
+            return 0.0, {"error": str(e)}
+        finally:
+            conn.close()
+    else:
+        return 0.0, {"error": "db_path or execute_fn required for execution_accuracy"}
 
     output_score = _match_result_sets(pred_result, gold_result)
 
@@ -223,7 +246,8 @@ Reasoning: [one sentence]"""
 def result_set_similarity(
     generated_sql: str,
     gold_sql: str,
-    db_path: str,
+    db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
 ) -> tuple[float, dict]:
     """
     RAGAS Answer Similarity for SQL agents.
@@ -234,24 +258,41 @@ def result_set_similarity(
     Args:
         generated_sql: SQL produced by the agent
         gold_sql: Ground-truth SQL
-        db_path: Path to SQLite database
+        db_path: Path to SQLite database (backward-compatible)
+        execute_fn: Optional callable (sql: str) -> list[tuple].
+                    When provided, takes precedence over db_path.
 
     Returns:
         (similarity score 0.0–1.0, details dict)
     """
-    try:
-        conn = _connect_readonly(db_path)
-    except Exception as e:
-        return 0.0, {"error": f"db_connect_failed: {e}"}
-    try:
-        gold_rows = conn.execute(gold_sql).fetchall()
-        gold_desc = conn.execute(gold_sql).description
-        pred_rows = conn.execute(generated_sql).fetchall()
-        pred_desc = conn.execute(generated_sql).description
-    except Exception as e:
-        return 0.0, {"error": str(e)}
-    finally:
-        conn.close()
+    if execute_fn is not None:
+        try:
+            gold_rows = list(execute_fn(gold_sql))
+            pred_rows = list(execute_fn(generated_sql))
+        except Exception as e:
+            logger.warning("execute_fn failed in result_set_similarity: %s", e)
+            return 0.0, {"error": str(e)}
+        # Infer column count from rows; 0 if result is empty
+        gold_cols = len(gold_rows[0]) if gold_rows else 0
+        pred_cols = len(pred_rows[0]) if pred_rows else 0
+    elif db_path is not None:
+        try:
+            conn = _connect_readonly(db_path)
+        except Exception as e:
+            return 0.0, {"error": f"db_connect_failed: {e}"}
+        try:
+            gold_rows = conn.execute(gold_sql).fetchall()
+            gold_desc = conn.execute(gold_sql).description
+            pred_rows = conn.execute(generated_sql).fetchall()
+            pred_desc = conn.execute(generated_sql).description
+        except Exception as e:
+            return 0.0, {"error": str(e)}
+        finally:
+            conn.close()
+        gold_cols = len(gold_desc) if gold_desc else 0
+        pred_cols = len(pred_desc) if pred_desc else 0
+    else:
+        return 0.0, {"error": "db_path or execute_fn required for result_set_similarity"}
 
     def _normalize_row(row):
         cells = []
@@ -272,10 +313,9 @@ def result_set_similarity(
 
     jaccard = len(intersection) / len(union) if union else 1.0
 
-    # Column count match
-    gold_cols = len(gold_desc) if gold_desc else 0
-    pred_cols = len(pred_desc) if pred_desc else 0
-    col_match = 1.0 if gold_cols == pred_cols else min(gold_cols, pred_cols) / max(gold_cols, pred_cols) if max(gold_cols, pred_cols) > 0 else 1.0
+    col_match = 1.0 if gold_cols == pred_cols else (
+        min(gold_cols, pred_cols) / max(gold_cols, pred_cols) if max(gold_cols, pred_cols) > 0 else 1.0
+    )
 
     score = round(0.8 * jaccard + 0.2 * col_match, 4)
 
