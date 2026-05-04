@@ -6,7 +6,7 @@ Author: SQLAS Contributors
 
 import logging
 import time
-from sqlas.core import SQLASScores, TestCase, LLMJudge
+from sqlas.core import SQLASScores, TestCase, LLMJudge, ExecuteFn
 from sqlas.evaluate import evaluate
 
 logger = logging.getLogger(__name__)
@@ -17,8 +17,10 @@ def run_suite(
     agent_fn,
     llm_judge: LLMJudge,
     db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
     valid_tables: set[str] | None = None,
     valid_columns: dict[str, set[str]] | None = None,
+    schema_context: str = "",
     weights: dict | None = None,
     validate_chart_with_llm: bool = True,
     pass_threshold: float = 0.6,
@@ -32,7 +34,10 @@ def run_suite(
         agent_fn:        Function(question: str) -> dict with keys:
                          sql, response, data (optional: {columns, rows, row_count, execution_time_ms})
         llm_judge:       Function (prompt: str) -> str
-        db_path:         SQLite database path (for execution accuracy)
+        db_path:         SQLite database path (backward-compatible)
+        execute_fn:      Optional callable (sql: str) -> list[tuple].
+                         Takes precedence over db_path. Enables evaluation against
+                         any database — Postgres, MySQL, Snowflake, BigQuery, etc.
         valid_tables:    Set of valid table names
         valid_columns:   Dict {table: {cols}}
         weights:         Custom weights (optional)
@@ -59,21 +64,26 @@ def run_suite(
         # Run agent
         result = agent_fn(tc.question)
 
-        # Evaluate
+        # Evaluate — per-test schema_context overrides suite-level schema_context
+        tc_schema = tc.schema_context if tc.schema_context else schema_context
         scores = evaluate(
             question=tc.question,
             generated_sql=result.get("sql", ""),
             llm_judge=llm_judge,
             gold_sql=tc.gold_sql,
             db_path=db_path,
+            execute_fn=execute_fn,
             response=result.get("response"),
             result_data=result.get("data"),
             valid_tables=valid_tables,
             valid_columns=valid_columns,
+            schema_context=tc_schema,
             expected_nonempty=tc.expected_nonempty,
             visualization=result.get("visualization"),
             validate_chart_with_llm=validate_chart_with_llm,
             weights=weights,
+            agent_steps=result.get("agent_steps"),
+            agent_result=result,
         )
 
         all_scores.append(scores)
