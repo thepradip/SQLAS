@@ -211,3 +211,107 @@ def agentic_score(
         "steps_taken": len(steps),
         "agent_mode": "react" if steps else "pipeline",
     }
+
+
+def plan_compliance(steps: list[dict]) -> tuple[float, dict]:
+    """
+    Did the agent follow the mandatory planning protocol?
+
+    Evaluates whether create_plan was called BEFORE execute_sql and
+    whether describe_table was called for schema inspection.
+    This metric directly measures the effectiveness of plan enforcement —
+    the feature added to prevent first-attempt failures.
+
+    Score:
+        1.0 = create_plan before execute_sql + describe_table called (full compliance)
+        0.7 = create_plan before execute_sql but no describe_table (partial)
+        0.5 = plan created but no SQL executed
+        0.0 = execute_sql called without prior create_plan (compliance failure)
+
+    Args:
+        steps: ReAct step list [{tool, args, result_preview}] in execution order.
+
+    Returns:
+        (score, details_dict)
+    """
+    if not steps:
+        return 0.0, {"note": "pipeline mode — plan compliance not applicable"}
+
+    tools = [s.get("tool", "") for s in steps]
+
+    plan_idx    = next((i for i, t in enumerate(tools) if t == "create_plan"), None)
+    exec_idx    = next((i for i, t in enumerate(tools) if t == "execute_sql"), None)
+    described   = any(t == "describe_table" for t in tools)
+    blocked     = any(t == "BLOCKED_execute_sql" for t in tools)
+
+    if exec_idx is not None and plan_idx is None:
+        return 0.0, {
+            "plan_compliance": "FAIL",
+            "issue": "execute_sql called without create_plan — planning was skipped",
+            "blocked_attempts": blocked,
+        }
+
+    if plan_idx is not None and exec_idx is not None and plan_idx > exec_idx:
+        return 0.0, {
+            "plan_compliance": "FAIL",
+            "issue": "create_plan called AFTER execute_sql — wrong order",
+        }
+
+    if plan_idx is None:
+        return 0.5, {"plan_compliance": "NO_SQL", "note": "plan created but no SQL executed"}
+
+    if not described:
+        return 0.7, {
+            "plan_compliance": "PARTIAL",
+            "issue": "create_plan called but describe_table skipped — column names may be wrong",
+        }
+
+    return 1.0, {
+        "plan_compliance": "PASS",
+        "plan_before_sql":   True,
+        "schema_inspected":  True,
+        "blocked_attempts":  blocked,
+    }
+
+
+def first_attempt_success(agent_result: dict) -> tuple[float, dict]:
+    """
+    Did the agent generate correct SQL on the first attempt without retrying?
+
+    Measures the combined effectiveness of:
+      - create_plan enforcement (plan before acting)
+      - Schema context quality (right tables + columns provided)
+      - Few-shot examples from FeedbackStore
+
+    A well-planned agent using accurate schema context succeeds first-time.
+    Retries indicate planning gaps or context quality problems.
+
+    Score:
+        1.0 = succeeded with 0 retries
+        0.7 = succeeded with 1 retry
+        0.4 = succeeded with 2 retries
+        0.0 = failed after max retries
+
+    Args:
+        agent_result: The dict returned by run_query() or run_react_query().
+
+    Returns:
+        (score, details_dict)
+    """
+    metrics     = agent_result.get("metrics") or {}
+    success     = agent_result.get("success", False)
+    retry_count = int(metrics.get("retry_count", 0))
+
+    if not success:
+        return 0.0, {
+            "success":     False,
+            "retry_count": retry_count,
+            "note":        "Query failed — check SQL validity and schema context",
+        }
+
+    score = max(0.0, round(1.0 - retry_count * 0.3, 4))
+    return score, {
+        "success":     True,
+        "retry_count": retry_count,
+        "note":        "First attempt" if retry_count == 0 else f"Succeeded after {retry_count} retry/retries",
+    }
