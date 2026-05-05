@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqlas"
-version = "2.5.0"
+version = "2.6.0"
 description = "SQLAS — SQL Agent Scoring Framework. Production-grade evaluation for Text-to-SQL and Agentic SQL agents with guardrail, visualization, agentic quality, and cache performance metrics."
 readme = "README.md"
 license = "MIT"
@@ -29,9 +29,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mlflow = ["mlflow>=3.0"]
-dev = ["pytest>=7.0", "build", "twine"]
-all = ["mlflow>=3.0"]
+mlflow      = ["mlflow>=3.0"]
+wandb       = ["wandb>=0.16"]
+langsmith   = ["langsmith>=0.1"]
+ui          = ["streamlit>=1.30", "pandas>=2.0"]
+benchmarks  = []                             # Spider/BIRD datasets downloaded separately
+prometheus  = ["prometheus-client>=0.19"]
+dev         = ["pytest>=7.0", "build", "twine"]
+all         = ["mlflow>=3.0", "wandb>=0.16", "langsmith>=0.1", "streamlit>=1.30", "pandas>=2.0"]
 
 [project.urls]
 Homepage = "https://github.com/thepradip/SQLAS"

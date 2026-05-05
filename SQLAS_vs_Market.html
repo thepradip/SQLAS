@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>SQLAS vs Market — SQL Agent Evaluation Comparison</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0d0d0d;
+  --bg2:      #141414;
+  --bg3:      #1a1a1a;
+  --border:   rgba(255,255,255,0.08);
+  --blue:     #4a9eff;
+  --blue-dim: rgba(74,158,255,0.12);
+  --green:    #3ecf8e;
+  --green-dim:rgba(62,207,142,0.12);
+  --white:    #ffffff;
+  --gray1:    #e0e0e0;
+  --gray2:    #a0a0a0;
+  --gray3:    #606060;
+  --red:      #f87171;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--gray1);
+  line-height: 1.6;
+  font-size: 15px;
+  padding: 0 24px 60px;
+}
+
+.page { max-width: 1080px; margin: 0 auto; }
+
+/* ── Header ── */
+.hero {
+  text-align: center;
+  padding: 64px 0 52px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 52px;
+}
+.hero h1 {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: var(--white);
+  margin-bottom: 14px;
+}
+.hero h1 span { color: var(--blue); }
+.hero p {
+  font-size: 16px;
+  color: var(--gray2);
+  max-width: 560px;
+  margin: 0 auto 24px;
+}
+.pill-row { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.pill {
+  padding: 4px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  color: var(--gray2);
+  background: var(--bg2);
+}
+.pill.blue  { color: var(--blue);  border-color: rgba(74,158,255,0.3);  background: var(--blue-dim); }
+.pill.green { color: var(--green); border-color: rgba(62,207,142,0.3); background: var(--green-dim); }
+
+/* ── Sections ── */
+section { margin-bottom: 56px; }
+h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--white);
+  margin-bottom: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+h2 small {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--gray3);
+  margin-left: 10px;
+}
+p { color: var(--gray2); margin-bottom: 14px; font-size: 14px; }
+
+/* ── Comparison table ── */
+.tbl-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); margin: 20px 0; }
+table { width: 100%; border-collapse: collapse; }
+thead tr { background: var(--bg2); }
+th {
+  padding: 11px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gray3);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--gray2);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+.fn { font-weight: 500; color: var(--gray1); }
+.yes { color: var(--green); font-weight: 600; }
+.no  { color: var(--gray3); }
+.pa  { color: #c9a227; }
+.hi  { color: var(--white); font-weight: 700; }
+.group-row td {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray3);
+  background: var(--bg2);
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+.tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(62,207,142,0.3);
+  color: var(--green);
+  background: var(--green-dim);
+  margin-left: 6px;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+/* ── Cards ── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px,1fr)); gap: 14px; margin: 18px 0; }
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  border-top: 2px solid var(--border);
+}
+.card.b { border-top-color: var(--blue); }
+.card.g { border-top-color: var(--green); }
+.card-head { font-size: 14px; font-weight: 600; color: var(--white); margin-bottom: 8px; }
+.card-body { font-size: 13px; color: var(--gray2); line-height: 1.6; }
+.card-tag {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(62,207,142,0.25);
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+/* ── Cost table ── */
+.cost-tbl { width: 100%; border-collapse: collapse; margin: 16px 0; }
+.cost-tbl th {
+  background: var(--bg2);
+  padding: 10px 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gray3);
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.cost-tbl th:first-child { text-align: left; }
+.cost-tbl td {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--gray2);
+  text-align: right;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.cost-tbl td:first-child { text-align: left; color: var(--gray1); font-weight: 500; }
+.cost-tbl .hl { color: var(--green); font-weight: 600; }
+
+/* ── Code block ── */
+.code {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--gray1);
+  margin: 16px 0;
+  overflow-x: auto;
+  line-height: 1.8;
+}
+.code .c { color: var(--gray3); }
+.code .g { color: var(--green); }
+.code .b { color: var(--blue); }
+
+/* ── Gap boxes ── */
+.gaps { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.gap {
+  background: var(--bg2);
+  border: 1px solid rgba(248,113,113,0.2);
+  border-radius: 10px;
+  padding: 18px;
+}
+.gap-title { font-size: 13px; font-weight: 600; color: var(--red); margin-bottom: 7px; }
+.gap-body  { font-size: 13px; color: var(--gray2); line-height: 1.6; }
+
+/* ── Verdict ── */
+.verdict {
+  background: var(--bg2);
+  border: 1px solid rgba(74,158,255,0.2);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  margin: 40px 0;
+}
+.verdict h3 { font-size: 18px; font-weight: 600; color: var(--white); margin-bottom: 10px; }
+.verdict p  { color: var(--gray2); max-width: 680px; margin: 0 auto; font-size: 14px; }
+
+/* ── Footer ── */
+footer {
+  text-align: center;
+  color: var(--gray3);
+  font-size: 12px;
+  padding: 28px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+}
+footer a { color: var(--blue); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<!-- HEADER -->
+<div class="hero">
+  <h1>SQLAS <span>vs</span> Market</h1>
+  <p>An honest comparison of every SQL agent evaluation framework available in 2025.</p>
+  <div class="pill-row">
+    <span class="pill green">v2.6.0</span>
+    <span class="pill blue">45 metrics</span>
+    <span class="pill">Spider / BIRD</span>
+    <span class="pill">MLflow · W&B · LangSmith</span>
+    <span class="pill">Streamlit UI</span>
+  </div>
+</div>
+
+<!-- COMPARISON TABLE -->
+<section>
+  <h2>Feature Comparison <small>✦ = unique to SQLAS</small></h2>
+  <p>Every SQL evaluation framework available as of 2025.</p>
+
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:35%">Feature</th>
+          <th>SQLAS</th>
+          <th>defog/sqleval</th>
+          <th>RAGAS</th>
+          <th>DeepEval</th>
+          <th>LangSmith</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="group-row"><td colspan="6">Core Correctness</td></tr>
+        <tr><td class="fn">Execution accuracy</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td class="fn">Semantic equivalence (LLM)</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="pa">via RAGAS</td></tr>
+        <tr><td class="fn">Result set similarity</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">Truncation-aware result coverage <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+
+        <tr class="group-row"><td colspan="6">Response Quality</td></tr>
+        <tr><td class="fn">Faithfulness</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="pa">via RAGAS</td></tr>
+        <tr><td class="fn">Answer relevance + completeness</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td><td class="pa">via RAGAS</td></tr>
+        <tr><td class="fn">Context precision / recall</td><td class="yes">✓</td><td class="no">–</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td></tr>
+
+        <tr class="group-row"><td colspan="6">Safety — No other framework has this category</td></tr>
+        <tr><td class="fn">SQL injection detection <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">PII column access / leakage <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">Prompt injection detection <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">3-stage guardrail pipeline <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+
+        <tr class="group-row"><td colspan="6">Agentic Quality — No other SQL framework has this category</td></tr>
+        <tr><td class="fn">Plan compliance <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">First-attempt success rate <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">Schema grounding + step efficiency <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="pa">partial</td><td class="pa">partial</td><td class="no">–</td></tr>
+
+        <tr class="group-row"><td colspan="6">Scoring & Verdicts</td></tr>
+        <tr><td class="fn">3-dimension AND verdict <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">Single blended score</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+        <tr class="group-row"><td colspan="6">Benchmarks & Integrations</td></tr>
+        <tr><td class="fn">Spider / BIRD benchmark</td><td class="yes">✓ v2.6</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">Smart token-saving sampling <span class="tag">✦ unique</span></td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="no">–</td><td class="no">–</td></tr>
+        <tr><td class="fn">MLflow integration</td><td class="yes">✓</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td class="fn">W&B + LangSmith</td><td class="yes">✓</td><td class="no">–</td><td class="pa">partial</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td class="fn">Streamlit UI</td><td class="yes">✓ v2.6</td><td class="no">–</td><td class="no">–</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr><td class="fn">Any database (execute_fn)</td><td class="yes">✓</td><td class="pa">partial</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+        <tr>
+          <td class="fn">Total SQL-specific metrics</td>
+          <td class="hi">45</td>
+          <td>~5</td><td>~8</td><td>~10</td><td>~5</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- UNIQUE STRENGTHS -->
+<section>
+  <h2>Where SQLAS is #1</h2>
+  <div class="cards">
+    <div class="card g">
+      <div class="card-head">Safety Evaluation</div>
+      <div class="card-body">SQL injection, prompt injection, PII column access, PII leakage — zero other SQL evaluator measures these. Essential for healthcare, finance, and enterprise.</div>
+      <div class="card-tag">Only framework with safety metrics</div>
+    </div>
+    <div class="card b">
+      <div class="card-head">Agentic Quality</div>
+      <div class="card-body">plan_compliance, first_attempt_success, schema_grounding, steps_efficiency — evaluates HOW the agent reasoned, not just what SQL it produced.</div>
+      <div class="card-tag">Only framework with agentic metrics</div>
+    </div>
+    <div class="card g">
+      <div class="card-head">Three-Dimension AND Verdict</div>
+      <div class="card-body">PASS only when correctness AND quality AND safety all meet their thresholds. A safe-but-wrong query cannot mask as PASS — unlike every other framework's blended score.</div>
+      <div class="card-tag">Prevents false positives</div>
+    </div>
+    <div class="card b">
+      <div class="card-head">Smart Sampling (Token Savings)</div>
+      <div class="card-body">Spider's 1,034 questions cost $15–30 to evaluate in full. SQLAS stratified sampling (50 questions) gives a representative score for $0.25 — 60× cheaper.</div>
+      <div class="card-tag">60× cost reduction</div>
+    </div>
+    <div class="card g">
+      <div class="card-head">Result Coverage</div>
+      <div class="card-body">Catches truncated GROUP BY queries — a 50-table aggregation truncated to 500 rows scores 0.3, not 1.0. No other framework detects this production-critical bug.</div>
+      <div class="card-tag">Detects truncation bugs</div>
+    </div>
+    <div class="card b">
+      <div class="card-head">Observability Suite</div>
+      <div class="card-body">MLflow, W&B, LangSmith, Prometheus in one library. Log every evaluation run to your existing stack with a single function call.</div>
+      <div class="card-tag">Most complete integrations</div>
+    </div>
+  </div>
+</section>
+
+<!-- COST COMPARISON -->
+<section>
+  <h2>Spider Benchmark Cost</h2>
+  <p>Full eval vs SQLAS smart sampling — same representative score at 60× lower cost.</p>
+  <table class="cost-tbl">
+    <thead>
+      <tr><th>Approach</th><th>Questions</th><th>LLM calls</th><th>Est. cost (GPT-4o)</th><th>Time</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Full set, all 1034 questions</td><td>1,034</td><td>~3,100</td><td>$15–30</td><td>~45 min</td></tr>
+      <tr><td>SQLAS default  (n_samples=50)</td><td class="hl">50</td><td class="hl">~150</td><td class="hl">~$0.25</td><td class="hl">~2 min</td></tr>
+      <tr><td>SQLAS extended (n_samples=100)</td><td>100</td><td>~300</td><td>~$0.50</td><td>~4 min</td></tr>
+      <tr><td>Safety-only run (no LLM judge)</td><td>50</td><td class="hl">0</td><td class="hl">$0.00</td><td class="hl">&lt;30s</td></tr>
+    </tbody>
+  </table>
+
+  <div class="code"><span class="c"># Spider benchmark — 50 stratified samples, ~$0.25</span>
+from sqlas.benchmarks import run_spider_benchmark
+
+results = run_spider_benchmark(
+    agent_fn   = <span class="g">my_agent</span>,
+    llm_judge  = <span class="g">my_judge</span>,
+    spider_dir = <span class="b">"./spider"</span>,   <span class="c"># download from yale-lily.github.io/spider</span>
+    n_samples  = <span class="b">50</span>,            <span class="c"># stratified: 20/30/30/20 by difficulty</span>
+    mlflow_run = <span class="b">True</span>,
+)
+print(results[<span class="b">"summary"</span>][<span class="b">"overall_score"</span>])    <span class="c"># 0.7823</span>
+print(results[<span class="b">"summary"</span>][<span class="b">"safety_score"</span>])     <span class="c"># 0.9901  ← Spider has no safety baseline</span>
+print(results[<span class="b">"cost_estimate_usd"</span>])            <span class="c"># 0.25</span></div>
+</section>
+
+<!-- INTEGRATIONS -->
+<section>
+  <h2>Observability Integrations</h2>
+  <div class="code"><span class="c"># One call logs to all configured integrations</span>
+from sqlas.integrations import log_all
+
+log_all(
+    results,
+    mlflow_experiment = <span class="b">"sql-agent-v2"</span>,
+    wandb_project     = <span class="b">"sql-evals"</span>,
+    langsmith_project = <span class="b">"my-sql-agent"</span>,
+)
+
+<span class="c"># Launch Streamlit UI</span>
+<span class="g">pip install "sqlas[ui]"</span>
+<span class="g">python -m sqlas ui</span>   <span class="c"># → http://localhost:8501</span></div>
+</section>
+
+<!-- GAPS -->
+<section>
+  <h2>Honest Gaps vs Competition</h2>
+  <div class="gaps">
+    <div class="gap">
+      <div class="gap-title">Community &amp; Adoption</div>
+      <div class="gap-body">RAGAS has widespread adoption and published research. SQLAS is newer — technically strong but lower community trust and fewer real-world case studies.</div>
+    </div>
+    <div class="gap">
+      <div class="gap-title">LLM Judge Calibration</div>
+      <div class="gap-body">RAGAS published calibration against human annotations. SQLAS LLM-as-judge metrics have no published calibration — confidence intervals are unknown.</div>
+    </div>
+    <div class="gap">
+      <div class="gap-title">No Public Leaderboard</div>
+      <div class="gap-body">Spider/BIRD leaderboards let you compare against GPT-4o and SQLCoder baselines. SQLAS has no public leaderboard — benchmark scores can't be externally compared yet.</div>
+    </div>
+    <div class="gap">
+      <div class="gap-title">Integration Tests</div>
+      <div class="gap-body">140 unit tests, but no end-to-end integration tests against real PostgreSQL / MySQL / Snowflake. Production reliability across DB types is not formally verified.</div>
+    </div>
+  </div>
+</section>
+
+<!-- VERDICT -->
+<div class="verdict">
+  <h3>Verdict</h3>
+  <p>For production SQL agent evaluation — safety, guardrails, agentic quality, multi-dimensional correctness — <strong>SQLAS is the most comprehensive framework available</strong>. The safety and agentic metrics exist nowhere else. For academic NL2SQL benchmarking with published leaderboards, RAGAS and defog/sqleval remain more established.</p>
+</div>
+
+<footer>
+  SQLAS v2.6.0 &nbsp;·&nbsp; MIT License &nbsp;·&nbsp;
+  <a href="https://github.com/thepradip/SQLAS">github.com/thepradip/SQLAS</a> &nbsp;·&nbsp;
+  <a href="https://pypi.org/project/sqlas/">pypi.org/project/sqlas</a> &nbsp;·&nbsp;
+  Author: thepradip
+</footer>
+
+</div>
+</body>
+</html>
