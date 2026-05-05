@@ -21,14 +21,21 @@ from config import get_settings
 
 settings = get_settings()
 
+# SQLite uses NullPool and doesn't support pool_size/max_overflow.
+# PostgreSQL/MySQL benefit from a proper connection pool.
+_is_sqlite = "sqlite" in settings.database_url.lower()
+_pool_kwargs = {} if _is_sqlite else {
+    "pool_size":    20,    # max persistent connections
+    "max_overflow": 40,    # extra connections under burst load
+    "pool_timeout": 30,    # seconds before "pool exhausted" error
+    "pool_recycle": 1800,  # recycle every 30 min (avoids MySQL 8h timeout)
+}
+
 engine = create_async_engine(
     settings.database_url,
     echo=False,
-    pool_pre_ping=True,        # reconnect on stale connections
-    pool_size=20,              # max persistent connections
-    max_overflow=40,           # extra connections under burst load
-    pool_timeout=30,           # seconds to wait before "pool exhausted" error
-    pool_recycle=1800,         # recycle connections every 30 min (avoids MySQL 8h timeout)
+    pool_pre_ping=True,
+    **_pool_kwargs,
 )
 
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
