@@ -2,17 +2,21 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, List, Table2, Database, CheckCircle2, Cpu } from "lucide-react";
 
 const TOOL_ICONS = {
-  list_tables:    <List size={12} />,
-  describe_table: <Table2 size={12} />,
-  execute_sql:    <Database size={12} />,
-  final_answer:   <CheckCircle2 size={12} />,
+  create_plan:         <Cpu size={12} />,
+  list_tables:         <List size={12} />,
+  describe_table:      <Table2 size={12} />,
+  execute_sql:         <Database size={12} />,
+  final_answer:        <CheckCircle2 size={12} />,
+  BLOCKED_execute_sql: <span style={{color:"#ff8e7a"}}>⊘</span>,
 };
 
 const TOOL_COLORS = {
-  list_tables:    "text-sky-300 bg-sky-400/10 border-sky-400/20",
-  describe_table: "text-violet-300 bg-violet-400/10 border-violet-400/20",
-  execute_sql:    "text-[var(--accent)] bg-[rgba(102,217,239,0.08)] border-[rgba(102,217,239,0.18)]",
-  final_answer:   "text-emerald-300 bg-emerald-400/10 border-emerald-400/20",
+  create_plan:         "text-yellow-300 bg-yellow-400/10 border-yellow-400/20",
+  list_tables:         "text-sky-300 bg-sky-400/10 border-sky-400/20",
+  describe_table:      "text-violet-300 bg-violet-400/10 border-violet-400/20",
+  execute_sql:         "text-[var(--accent)] bg-[rgba(102,217,239,0.08)] border-[rgba(102,217,239,0.18)]",
+  final_answer:        "text-emerald-300 bg-emerald-400/10 border-emerald-400/20",
+  BLOCKED_execute_sql: "text-red-300 bg-red-400/10 border-red-400/20",
 };
 
 export default function AgentSteps({ steps }) {
@@ -92,8 +96,14 @@ function StepRow({ step, index, isLast, expanded, onToggle }) {
       >
         <div className="flex items-center gap-2">
           <span className={`text-[11px] font-medium ${colorClass.split(" ")[0]}`}>
-            {step.tool.replace(/_/g, " ")}
+            {step.tool === "BLOCKED_execute_sql" ? "⊘ blocked — plan required" : step.tool.replace(/_/g, " ")}
           </span>
+          {/* create_plan: show query understanding inline */}
+          {step.tool === "create_plan" && step.args?.query_understanding && (
+            <span className="text-[11px] text-[var(--text-3)] truncate max-w-[300px]">
+              — {step.args.query_understanding.slice(0, 80)}
+            </span>
+          )}
           {/* Primary arg preview */}
           {step.args?.table_name && (
             <span className="text-[11px] text-[var(--text-3)]">— {step.args.table_name}</span>
