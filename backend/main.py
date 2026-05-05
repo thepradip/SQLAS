@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 
 from config import get_settings
 from database import get_table_list, build_full_context
-from agent import init_agent, run_query, get_cache, set_training_store, get_provider_name
+from agent import init_agent, run_query, get_cache, set_training_store, get_provider_name, set_drift_monitor, get_drift_monitor
 from tracing import init_tracing, log_user_feedback, log_detailed_feedback, EXPERIMENT_NAME
 from training_store import TrainingStore
 from tenant import TenantRegistry, TenantConfig, check_table_access, apply_row_filters
@@ -565,3 +565,94 @@ async def database_status():
             "cause":   detail["cause"],
             "fix":     detail["fix"],
         }
+
+
+# ─── Drift Monitoring API ──────────────────────────────────────────────────────
+
+@app.post("/drift/configure")
+async def configure_drift(body: dict):
+    """
+    Configure and start production drift monitoring.
+
+    Body:
+      mode          "full" | "sample" | "stratified" | "adaptive"
+      sample_rate   0.0–1.0  (default 0.10 = 10% of queries)
+      baseline_n    queries needed to establish baseline (default 50)
+      mlflow_exp    optional MLflow experiment name
+      alert_webhook optional webhook URL for drift alerts
+
+    Cost guide:
+      mode=full,    rate=1.0  → ~$0.05/query  (full coverage)
+      mode=sample,  rate=0.10 → ~$0.005/query (10% sampling)
+      mode=sample,  rate=0.01 → ~$0.0005/query (1% sampling, min cost)
+    """
+    from drift_monitor import DriftMonitor
+    from llm_providers import get_provider
+
+    mode        = body.get("mode", "sample")
+    sample_rate = float(body.get("sample_rate", 0.10))
+    baseline_n  = int(body.get("baseline_n", 50))
+    mlflow_exp  = body.get("mlflow_exp")
+    webhook     = body.get("alert_webhook")
+
+    prov = get_provider("azure", settings)
+
+    def judge(prompt: str) -> str:
+        return prov.complete([{"role": "user", "content": prompt}], max_tokens=500)
+
+    from database import execute_readonly_query as exec_fn_raw
+    monitor = DriftMonitor(
+        llm_judge     = judge,
+        mode          = mode,
+        sample_rate   = sample_rate,
+        baseline_n    = baseline_n,
+        mlflow_exp    = mlflow_exp,
+        alert_webhook = webhook,
+    )
+    set_drift_monitor(monitor)
+
+    return {
+        "status":      "ok",
+        "mode":        mode,
+        "sample_rate": sample_rate,
+        "baseline_n":  baseline_n,
+        "est_cost_per_query": round(sample_rate * 0.005, 5),
+        "message":     f"Drift monitor active — evaluating {sample_rate*100:.0f}% of queries",
+    }
+
+
+@app.get("/drift/status")
+async def drift_status():
+    """
+    Current drift status — lightweight, call from monitoring dashboards.
+    Returns: drift_level (STABLE/WARN/DRIFT/CRITICAL), metrics, alerts.
+    """
+    monitor = get_drift_monitor()
+    if monitor is None:
+        return {"status": "not_configured", "message": "POST /drift/configure to start monitoring"}
+    return monitor.get_status()
+
+
+@app.get("/drift/report")
+async def drift_report():
+    """
+    Full drift report with trends, recommendations, and alert history.
+    Use for periodic health summaries and dashboards.
+    """
+    monitor = get_drift_monitor()
+    if monitor is None:
+        return {"status": "not_configured"}
+    return monitor.get_report()
+
+
+@app.post("/drift/reset-baseline")
+async def drift_reset_baseline():
+    """
+    Reset drift baseline — call after deploying a new agent version
+    or making significant changes to prompts or training data.
+    """
+    monitor = get_drift_monitor()
+    if monitor is None:
+        raise HTTPException(status_code=400, detail="Drift monitor not configured")
+    monitor.reset_baseline()
+    return {"status": "ok", "message": "Baseline reset — will re-establish from next queries"}

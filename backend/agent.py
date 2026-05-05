@@ -35,17 +35,35 @@ client = AzureOpenAI(
 _schema_index: SchemaIndex | None = None
 _db_context: str = ""
 _query_cache: QueryCache | None = None
-_provider: LLMProvider | None = None  # swappable chat completion backend
+_provider: LLMProvider | None = None
+_training_store = None
+_context_engine = None
+_schema_graph   = None
+_vector_store   = None
+_drift_monitor  = None          # Production drift monitor
+
+_schema_overview: str = ""
 
 
-_schema_overview: str = ""   # short all-tables summary for the ReAct system prompt
+def set_training_store(store) -> None:
+    global _training_store
+    _training_store = store
+
+
+def set_drift_monitor(monitor) -> None:
+    """Inject a DriftMonitor for production quality tracking."""
+    global _drift_monitor
+    _drift_monitor = monitor
+
+
+def get_drift_monitor():
+    return _drift_monitor
 
 
 async def init_agent(provider: LLMProvider | None = None):
     """
     Called once on app startup.
-    Pass a provider to override the default Azure OpenAI backend —
-    useful for eval runs that compare multiple LLMs.
+    Pass a provider to override the default Azure OpenAI backend.
     """
     global _schema_index, _db_context, _query_cache, _provider, _schema_overview
     _provider = provider or get_provider("azure", settings)
@@ -68,6 +86,27 @@ async def init_agent(provider: LLMProvider | None = None):
         _schema_overview = _schema_index.all_tables_overview()
         retrieval_mode = "BM25+embeddings+RRF" if _schema_index._embeddings else "BM25"
         print(f"  Schema index ready ({table_count} tables, {retrieval_mode}).")
+
+        # Schema Graph — FK + semantic + naming + hierarchy edges, persisted to disk
+        from schema_graph import SchemaGraph
+        _schema_graph = SchemaGraph()
+        _schema_graph.build(schema, col_stats)
+
+        # Vector Store — ChromaDB with tables/columns/relationships, persisted to disk
+        from vector_store import VectorStore
+        _vector_store = VectorStore(settings=settings, azure_client=client)
+        _vector_store.build(schema, col_stats)
+
+        # Context Engine — uses both graph and vector store for retrieval
+        from context_engine import ContextEngine
+        _context_engine = ContextEngine(
+            schema_index=_schema_index,
+            training_store=_training_store,
+            settings=settings,
+            schema_graph=_schema_graph,
+            vector_store=_vector_store,
+        )
+        print("  Context Engine ready (graph + vector + BM25 + reranker).")
     else:
         print(f"  Small schema ({table_count} tables) — building full context...")
         _db_context = await build_full_context()
@@ -126,11 +165,35 @@ Return ONLY the SQL inside a ```sql``` block. No explanations outside the block.
 
 
 async def _get_context_for_query(user_query: str) -> str:
-    """Return the schema context to inject for this specific query."""
+    """
+    Return the schema context to inject for this specific query.
+    Uses Context Engine when available — provides validated, multi-strategy context.
+    Falls back to direct schema_index calls for small databases.
+    """
+    if _context_engine is not None:
+        ctx = await _context_engine.get_context(user_query)
+
+        # Log low-confidence warnings to help with debugging
+        if ctx.confidence < 0.5 and ctx.validation.warnings:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Low context confidence (%.2f) for query: %s | warnings: %s",
+                ctx.confidence, user_query[:80], ctx.validation.warnings,
+            )
+
+        overview = _schema_index.all_tables_overview()
+        return (
+            f"{overview}\n\n"
+            f"## Schema for Tables Relevant to Your Query\n"
+            f"*retrieved {len(ctx.tables)} tables · confidence {ctx.confidence:.0%} "
+            f"· strategy {ctx.validation.strategy_used}*\n\n"
+            f"{ctx.context_str}"
+        )
+
     if _schema_index is not None:
         relevant_tables = await _schema_index.retrieve_async(user_query)
         overview = _schema_index.all_tables_overview()
-        focused = _schema_index.focused_context(relevant_tables)
+        focused = _schema_index.focused_context(relevant_tables, query=user_query)
         return (
             f"{overview}\n\n"
             f"## Schema for Tables Relevant to Your Query\n"
@@ -176,14 +239,22 @@ def _strip_markdown_tables(content: str) -> str:
 async def _generate_sql(user_query: str, conversation_history: list[dict]) -> str:
     db_context = await _get_context_for_query(user_query)
 
-    # Inject few-shot examples from cache (verified entries prioritised)
+    # Training context: DDL + business docs + SQL examples from TrainingStore
+    training_section = ""
+    if _training_store is not None:
+        training_section = _training_store.format_context(user_query, top_k=4)
+
+    # Few-shot from verified cache
     few_shot_section = ""
     if _query_cache is not None:
         embedding = await _get_query_embedding(user_query)
         examples = _query_cache.get_few_shot_examples(user_query, embedding, top_k=3)
         few_shot_section = _build_few_shot_section(examples)
 
-    messages = [{"role": "system", "content": _build_system_prompt(db_context, few_shot_section)}]
+    # Combine: training context + few-shot + schema
+    combined_context = "\n\n".join(p for p in [training_section, db_context] if p)
+
+    messages = [{"role": "system", "content": _build_system_prompt(combined_context, few_shot_section)}]
     for msg in conversation_history[-6:]:
         messages.append(msg)
     messages.append({
@@ -406,7 +477,14 @@ async def run_query(
             sql=result["sql"],
             response=result["response"],
             embedding=embedding,
-            trace_id=result.get("trace_id"),   # links this entry to MLflow feedback
+            trace_id=result.get("trace_id"),
         )
+
+    # Drift monitoring — non-blocking, fires in background
+    if _drift_monitor is not None and result.get("success"):
+        import asyncio
+        asyncio.create_task(_drift_monitor.record(
+            query=user_query, agent_result=result
+        ))
 
     return result
