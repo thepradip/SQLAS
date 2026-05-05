@@ -33,6 +33,8 @@ from sqlas.guardrails import GuardrailPipeline, GuardrailResult
 from sqlas.feedback import FeedbackStore, FeedbackEntry
 from sqlas.prompt_registry import PromptRegistry, PromptVersion
 from sqlas.schema_quality import schema_retrieval_quality, batch_retrieval_quality
+from sqlas.benchmarks import run_spider_benchmark, run_bird_benchmark, download_instructions
+from sqlas.integrations import log_to_mlflow, log_to_wandb, log_to_langsmith, log_all
 from sqlas.correctness import execution_accuracy, syntax_valid, semantic_equivalence, result_set_similarity
 from sqlas.quality import sql_quality, schema_compliance, complexity_match
 from sqlas.production import data_scan_efficiency, execution_result, result_coverage
@@ -51,7 +53,7 @@ from sqlas.agentic import (
 from sqlas.cache import cache_hit_score, tokens_saved_score, few_shot_score
 from sqlas.runner import run_suite
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 __author__ = "SQLAS Contributors"
 
 __all__ = [

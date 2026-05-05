@@ -10,3 +10,8 @@ build/
 *.tar.gz
 *.pdf
 .DS_Store
+
+# React UI
+sqlas-ui/node_modules/
+sqlas-ui/dist/
+sqlas-ui/.vite/
