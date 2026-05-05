@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(open *)",
+      "Bash(python3 -m pytest *)",
+      "Bash(gh auth status)",
+      "Bash(gh auth status *)",
+      "Bash(gh api *)",
+      "Bash(gh repo view *)",
+      "Bash(gh release list *)",
+      "Bash(gh release view *)",
+      "Bash(curl -s *)",
+      "Bash(npm run dev)",
+      "Bash(npm run build)"
+    ]
+  }
+}
