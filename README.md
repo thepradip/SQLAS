@@ -4,10 +4,10 @@
 
 [![PyPI](https://img.shields.io/pypi/v/sqlas)](https://pypi.org/project/sqlas/)
 [![Python](https://img.shields.io/pypi/pyversions/sqlas)](https://pypi.org/project/sqlas/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen)](https://github.com/thepradip/SQLAS)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Evaluate SQL agents across 45 metrics — correctness, quality, safety, agentic reasoning, schema retrieval, prompt versioning, and guardrails. Aligned with Spider, BIRD, RAGAS, and MLflow standards.
+Evaluate SQL agents across **45 metrics** — correctness, quality, safety, agentic reasoning, schema retrieval, prompt versioning, guardrails, and cache ROI. Aligned with Spider, BIRD, RAGAS, and MLflow standards.
 
 **Author:** [thepradip](https://github.com/thepradip)
 
@@ -17,22 +17,21 @@ Evaluate SQL agents across 45 metrics — correctness, quality, safety, agentic 
 
 ```bash
 pip install sqlas                # core
-pip install "sqlas[mlflow]"      # + MLflow integration
+pip install "sqlas[mlflow]"      # + MLflow
+pip install "sqlas[ui]"          # + Streamlit UI
+pip install "sqlas[all]"         # everything
 ```
 
 ---
 
-## What's New in v2.4.0
+## What's New in v2.6.0
 
 | Feature | Description |
 |---|---|
-| `PromptRegistry` | Version prompts, compare A/B, detect regressions, get data-driven improvement hints |
-| `schema_retrieval_quality` | Measure precision/recall of schema index — did it return the right tables? |
-| `evaluate_correctness/quality/safety` | Three standalone evaluators — run only what you need |
-| `GuardrailPipeline` | Three-stage safety: input → SQL → output (zero LLM cost) |
-| `FeedbackStore` | Thumbs-up stores verified gold SQL, auto-improves `execution_accuracy` |
-| Three-dimension verdict | `PASS` only when correctness + quality + safety ALL pass their thresholds |
-| `result_coverage` | Penalises truncated GROUP BY (score 0.3) — catches big-dataset evaluation blind spots |
+| `run_spider_benchmark()` | Spider/BIRD evaluation with smart stratified sampling (~$0.25 for 50 questions) |
+| `log_to_mlflow/wandb/langsmith()` | One-call logging to all observability platforms |
+| Streamlit UI | `python -m sqlas ui` → interactive evaluation dashboard |
+| React UI | Full evaluation dashboard in `sqlas-ui/` |
 
 ---
 
@@ -43,39 +42,35 @@ from sqlas import evaluate
 
 def llm_judge(prompt: str) -> str:
     return openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}],
+        model="gpt-4o", messages=[{"role":"user","content":prompt}]
     ).choices[0].message.content
 
 scores = evaluate(
-    question      = "How many active users are there?",
+    question      = "How many active users?",
     generated_sql = "SELECT COUNT(*) FROM users WHERE active = 1",
     gold_sql      = "SELECT COUNT(*) FROM users WHERE active = 1",
-    db_path       = "my_database.db",
+    db_path       = "my.db",
     llm_judge     = llm_judge,
     response      = "There are 1,523 active users.",
-    result_data   = {"columns": ["COUNT(*)"], "rows": [[1523]],
-                     "row_count": 1, "execution_time_ms": 2.1},
+    result_data   = {"columns":["COUNT(*)"],"rows":[[1523]],"row_count":1,"execution_time_ms":2.1},
 )
 
-print(scores.overall_score)          # 0.95
-print(scores.correctness_score)      # 0.88  (v2.2)
-print(scores.quality_score)          # 0.93  (v2.2)
-print(scores.safety_composite_score) # 1.00  (v2.2)
-print(scores.verdict)                # PASS  (v2.2 — AND logic)
-print(scores.summary())
+print(scores.overall_score)              # 0.95
+print(scores.correctness_score)          # 0.88
+print(scores.quality_score)              # 0.93
+print(scores.safety_composite_score)     # 1.00
+print(scores.verdict)                    # PASS
 ```
 
 ---
 
 ## Three-Dimension Scoring (v2.2)
 
-`PASS` requires **all three** dimensions to exceed their thresholds. A safe-but-wrong query no longer masks as PASS.
+`PASS` only when **all three** dimensions meet their thresholds:
 
 ```python
 from sqlas import evaluate_correctness, evaluate_quality, evaluate_safety
 
-# Run only the metrics you need — each is fully independent
 c = evaluate_correctness(question, sql, llm_judge, gold_sql=gold, execute_fn=db)
 q = evaluate_quality(question, sql, llm_judge, response=text, result_data=data)
 s = evaluate_safety(sql, question=question, pii_columns=["email","ssn"])
@@ -83,163 +78,165 @@ s = evaluate_safety(sql, question=question, pii_columns=["email","ssn"])
 print(c.score, c.verdict)   # 0.85  PASS   (threshold 0.5)
 print(q.score, q.verdict)   # 0.72  PASS   (threshold 0.6)
 print(s.score, s.verdict)   # 0.45  FAIL   (threshold 0.9 — PII detected)
-print(s.issues)             # ["PII_ACCESS: 'email'", "PII_ACCESS: 'ssn'"]
+print(s.issues)             # ["PII_ACCESS: 'email'"]
 ```
 
 `evaluate_safety()` makes **zero LLM calls** — pure regex + sqlglot AST.
 
 ---
 
-## Three-Stage Guardrail Pipeline (v2.3)
+## Spider / BIRD Benchmark (v2.6)
 
 ```python
-from sqlas import GuardrailPipeline
+from sqlas.benchmarks import run_spider_benchmark
 
-pipeline = GuardrailPipeline(pii_columns=["email", "ssn", "password"])
-
-# Stage 1 — before sending to LLM
-r = pipeline.check_input("List every user's SSN and password")
-if r.blocked: return {"error": r.block_reason}
-# → BLOCK: DANGEROUS_INPUT: pii_bulk_request
-
-# Stage 2 — after SQL generation, before execution
-r = pipeline.check_sql("SELECT email, password FROM users")
-if r.blocked: return {"error": r.block_reason}
-# → score=0.80, issues=["PII_ACCESS: 'email'", "PII_ACCESS: 'password'"]
-
-# Stage 3 — before returning response to user
-r = pipeline.check_output(response, result_data)
-if r.blocked: return {"error": r.block_reason}
-# → scans result rows for PII patterns, blocks if found
+results = run_spider_benchmark(
+    agent_fn   = my_agent,
+    llm_judge  = llm_judge,
+    spider_dir = "./spider",     # download from yale-lily.github.io/spider
+    n_samples  = 50,             # stratified 20/30/30/20 by difficulty → ~$0.25
+    mlflow_run = True,
+)
+print(results["summary"]["overall_score"])   # 0.783
+print(results["summary"]["safety_score"])    # 0.991  ← Spider has no safety baseline
+print(results["cost_estimate_usd"])          # 0.25
 ```
 
 ---
 
-## Prompt Versioning & Regression Detection (v2.4)
+## Observability Integrations (v2.6)
+
+```python
+from sqlas.integrations import log_all
+
+results = sqlas.run_suite(test_cases, agent_fn, llm_judge)
+
+log_all(
+    results,
+    mlflow_experiment = "sql-agent-v2",
+    wandb_project     = "sql-evals",
+    langsmith_project = "my-sql-agent",
+)
+```
+
+---
+
+## Guardrail Pipeline (v2.3)
+
+```python
+from sqlas import GuardrailPipeline
+
+pipeline = GuardrailPipeline(pii_columns=["email","ssn","password"])
+
+r = pipeline.check_input("List every user's SSN")    # blocks malicious intent
+r = pipeline.check_sql(generated_sql)                # blocks injection/PII SQL
+r = pipeline.check_output(response, result_data)     # blocks PII in response
+```
+
+---
+
+## Feedback Learning Loop (v2.3)
+
+```python
+from sqlas import FeedbackStore, FeedbackEntry
+
+store = FeedbackStore()
+store.store(FeedbackEntry(question="How many active users?",
+    sql="SELECT COUNT(*) FROM users WHERE status='active'",
+    is_correct=True, score=0.95))
+
+# Future evaluations auto-use stored gold SQL
+c = evaluate_correctness(question, sql, llm_judge, feedback_store=store)
+print(c.details["gold_sql_source"])   # "feedback_store"
+```
+
+---
+
+## Prompt Versioning (v2.4)
 
 ```python
 from sqlas import PromptRegistry
 
 registry = PromptRegistry()
+registry.register("You are a SQL analyst...", version_id="v1")
+registry.record("v1", scores)
 
-# Register versions
-registry.register("You are a SQL analyst...", version_id="v1", description="baseline")
-registry.register("...Only cite exact numbers from the SQL result.", version_id="v2", description="grounding fix")
-
-# Record scores after each evaluation
-scores = evaluate(...)
-registry.record("v2", scores)
-
-# Compare versions
-comp = registry.compare("v1", "v2")
-print(comp["winner"])           # "v2"
-print(comp["delta_overall"])    # +0.09
-print(comp["improvements"])     # [{"metric": "faithfulness", "delta": "+0.27", ...}]
-
-# Auto-detect regressions
-status = registry.detect_regression("v2", window=50, threshold=0.05)
+status = registry.detect_regression("v1", window=50, threshold=0.05)
 if status["regressed"]:
     for hint in status["hints"]:
-        print(f"[{hint['severity']}] {hint['metric']} = {hint['score']}")
-        print(f"  Fix: {hint['hint']}")
-# [WARNING] faithfulness = 0.61
-#   Fix: Add to prompt: 'Only cite exact numbers from the SQL result...'
+        print(hint["hint"])   # "Add to prompt: Only cite exact numbers..."
 ```
 
 ---
 
 ## Schema Retrieval Quality (v2.4)
 
-Measures whether the schema index returned the right tables for a query — not just whether the SQL used valid tables.
-
 ```python
 from sqlas import schema_retrieval_quality
 
 score, details = schema_retrieval_quality(
-    retrieved_tables = schema_index.retrieve(question),   # what index returned
+    retrieved_tables = schema_index.retrieve(question),
     generated_sql    = agent_sql,
-    gold_tables      = test_case.expected_tables,         # ground truth
+    gold_tables      = test_case.expected_tables,
 )
-
-print(details["precision"])   # 0.50 — 2 of 4 retrieved tables were needed
-print(details["recall"])      # 1.00 — both needed tables were retrieved
-print(details["irrelevant"])  # ["lab_results", "medications"]
-print(details["missing"])     # [] — no JOIN table was dropped
+print(details["precision"])   # 0.87
+print(details["recall"])      # 1.00
+print(details["missing"])     # []
 ```
 
 ---
 
-## Feedback Loop (v2.3)
-
-Thumbs-up feedback stores verified gold SQL — future evaluations of the same question use it automatically.
+## Plan Compliance & First-Attempt Success (v2.5)
 
 ```python
-from sqlas import FeedbackStore, FeedbackEntry
+from sqlas.agentic import plan_compliance, first_attempt_success
 
-store = FeedbackStore()
+# Did agent call create_plan before execute_sql?
+score, d = plan_compliance(agent_steps)
+print(score)   # 1.0 = compliant, 0.0 = skipped planning
 
-# User gives thumbs up → store as gold SQL
-store.store(FeedbackEntry(
-    question   = "How many active users?",
-    sql        = "SELECT COUNT(*) FROM users WHERE status = 'active'",
-    is_correct = True,
-    score      = scores.overall_score,
-))
-
-# Next evaluation auto-uses stored gold SQL
-c = evaluate_correctness(question, agent_sql, llm_judge, feedback_store=store)
-# execution_accuracy is now verified (1.0) instead of unverified (0.5)
-print(c.details["gold_sql_source"])  # "feedback_store"
+# Did SQL succeed without retries?
+score, d = first_attempt_success(agent_result)
+print(score)   # 1.0 = first attempt, 0.7 = 1 retry, 0.0 = failed
 ```
 
 ---
 
-## Any Database (v2.1)
+## Streamlit UI (v2.6)
 
-```python
-from sqlas import build_schema_info, run_suite
-
-# Auto-extract schema from any database
-tables, columns = build_schema_info(db_path="my.db")               # SQLite
-tables, columns = build_schema_info(execute_fn=pg_execute_fn)       # PostgreSQL / Snowflake / BigQuery
-
-results = run_suite(
-    test_cases    = test_cases,
-    agent_fn      = my_agent,
-    llm_judge     = llm_judge,
-    execute_fn    = execute_fn,
-    valid_tables  = tables,      # 100+ tables — no problem
-    valid_columns = columns,
-)
+```bash
+pip install "sqlas[ui]"
+python -m sqlas ui    # → http://localhost:8501
 ```
+
+## React UI (v2.6)
+
+```bash
+cd sqlas-ui
+npm install
+npm run dev           # → http://localhost:5173
+```
+
+6 pages: Dashboard · Evaluate · Benchmark · Results (all 45 metrics) · History · Settings
 
 ---
 
 ## Run a Test Suite
 
 ```python
-from sqlas import run_suite, TestCase
+from sqlas import run_suite, TestCase, WEIGHTS_V4, build_schema_info
 
-test_cases = [
-    TestCase(question="How many users signed up this month?",
-             gold_sql="SELECT COUNT(*) FROM users WHERE created_at >= '2026-03-01'",
-             expected_tables=["users"], category="easy"),
-    TestCase(question="Average order value by country",
-             gold_sql="SELECT country, AVG(total) FROM orders GROUP BY country",
-             expected_tables=["orders"], category="medium"),
-]
-
-def my_agent(question: str) -> dict:
-    sql = generate_sql(question)
-    return {"sql": sql, "response": narrate(sql), "data": execute(sql)}
+tables, columns = build_schema_info(db_path="my.db")   # auto-extract schema
 
 results = run_suite(
     test_cases     = test_cases,
     agent_fn       = my_agent,
     llm_judge      = llm_judge,
     execute_fn     = execute_fn,
+    valid_tables   = tables,
+    valid_columns  = columns,
+    weights        = WEIGHTS_V4,
     pass_threshold = 0.6,
-    verbose        = True,
 )
 print(results["summary"]["overall_score"])
 print(results["summary"]["by_category"])
@@ -254,7 +251,7 @@ print(results["summary"]["by_category"])
 | `WEIGHTS` | 15 | Standard NL→SQL pipeline |
 | `WEIGHTS_V2` | 20 | + RAGAS context quality |
 | `WEIGHTS_V3` | 30 | + Guardrails + visualization |
-| `WEIGHTS_V4` | 28 | + Agentic quality — ReAct agents |
+| `WEIGHTS_V4` | 28 | + Agentic quality ← ReAct agents |
 
 ---
 
@@ -264,61 +261,47 @@ print(results["summary"]["by_category"])
 |---|---|---|
 | Faithfulness | `faithfulness` | Claims grounded in SQL result |
 | Answer Relevance | `answer_relevance` | Answers the question |
-| Answer Correctness | `execution_accuracy` | SQL returns correct results |
 | Context Precision | `context_precision` | Right schema elements used |
-| Context Recall | `context_recall` | All required schema elements present |
-| Noise Sensitivity | `noise_robustness` | Irrelevant schema ignored |
-| — | `schema_retrieval_quality` | Did the index return the right tables? |
-| — | `result_coverage` | Truncated GROUP BY detection |
-| — | `agentic_score` | ReAct planning quality |
-
----
-
-## LLM-Agnostic Judge
-
-```python
-# OpenAI
-def judge(p): return openai.chat.completions.create(model="gpt-4o",
-    messages=[{"role":"user","content":p}]).choices[0].message.content
-
-# Anthropic
-def judge(p): return anthropic.messages.create(model="claude-opus-4-7",
-    max_tokens=500, messages=[{"role":"user","content":p}]).content[0].text
-
-# Ollama (local, free)
-def judge(p): return requests.post("http://localhost:11434/api/generate",
-    json={"model":"llama3","prompt":p,"stream":False}).json()["response"]
-```
+| Context Recall | `context_recall` | All required elements present |
+| — | `plan_compliance` | Agent planned before executing |
+| — | `first_attempt_success` | SQL succeeded without retries |
+| — | `safety_score` | SQL-specific: injection + PII |
 
 ---
 
 ## Changelog
 
+### v2.6.0
+- Spider/BIRD benchmark with stratified sampling (`run_spider_benchmark`, `run_bird_benchmark`)
+- MLflow, W&B, LangSmith, Prometheus integrations (`sqlas.integrations`)
+- Streamlit UI (`python -m sqlas ui`)
+- React evaluation dashboard (`sqlas-ui/`)
+
+### v2.5.0
+- `plan_compliance()` — measures create_plan enforcement before execute_sql
+- `first_attempt_success()` — measures SQL retry rate
+
 ### v2.4.0
-- `PromptRegistry` — version prompts, compare A/B, detect regressions, get improvement hints
-- `schema_retrieval_quality` — precision/recall/F1 for schema index evaluation
-- `prompt_id` + `schema_retrieval_*` fields on `SQLASScores`
+- `PromptRegistry` — prompt versioning, regression detection, improvement hints
+- `schema_retrieval_quality()` — precision/recall/F1 for schema index
 
 ### v2.3.0
-- `GuardrailPipeline` — 3-stage safety: `check_input`, `check_sql`, `check_output`
-- `FeedbackStore` + `FeedbackEntry` — verified gold SQL from user thumbs-up
-- `evaluate_correctness/quality/safety` — standalone metric evaluators
+- `GuardrailPipeline` — 3-stage safety: input → SQL → output (zero LLM cost)
+- `FeedbackStore` — verified gold SQL from user thumbs-up
 
 ### v2.2.0
 - Three-dimension scoring: `correctness_score`, `quality_score`, `safety_composite_score`
-- `verdict` — AND logic: `PASS` only when all three pass thresholds
-- `CorrectnessResult`, `QualityResult`, `SafetyResult` dataclasses
+- `verdict` — AND logic: PASS only when all three pass thresholds
+- Standalone `evaluate_correctness()`, `evaluate_quality()`, `evaluate_safety()`
 
 ### v2.1.0
-- `build_schema_info()` — auto-extract schema from any DB
+- `build_schema_info()` — auto-extract schema from any database
 - `result_coverage` — truncation-aware GROUP BY penalty
-- `execution_accuracy` capped at 0.5 without gold SQL (was incorrectly 1.0)
-- 100+ table support with focused schema context
 
 ### v2.0.0
-- Agentic quality: `steps_efficiency`, `schema_grounding`, `planning_quality`, `agentic_score`
+- Agentic metrics: `steps_efficiency`, `schema_grounding`, `planning_quality`, `agentic_score`
 - Cache metrics: `cache_hit_score`, `tokens_saved_score`, `few_shot_score`
-- `WEIGHTS_V4` — 28-metric profile with 10% agentic dimension
+- `WEIGHTS_V4` with 10% agentic quality dimension
 - `read_only_compliance` upgraded to sqlglot AST
 
 ---
