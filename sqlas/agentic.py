@@ -12,7 +12,7 @@ Metrics:
   tool_use_accuracy   — did the agent use the right tools?
 """
 
-from sqlas.core import LLMJudge, _parse_score
+from sqlas.core import LLMJudge, _parse_score, _retry_llm_judge
 
 
 def steps_efficiency(steps_taken: int, optimal_steps: int = 3) -> float:
@@ -119,9 +119,12 @@ Respond EXACTLY:
 Planning_Quality: [score]
 Reasoning: [one sentence]"""
 
-    result = llm_judge(prompt)
-    score, reasoning = _parse_score(result, "Planning_Quality")
-    return score, {"reasoning": reasoning, "steps_count": len(steps)}
+    result = _retry_llm_judge(llm_judge, prompt)
+    score, reasoning, parse_ok = _parse_score(result, "Planning_Quality")
+    details: dict = {"reasoning": reasoning, "steps_count": len(steps)}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def tool_use_accuracy(
@@ -172,9 +175,12 @@ Respond EXACTLY:
 Tool_Use_Accuracy: [score]
 Reasoning: [one sentence]"""
 
-    result = llm_judge(prompt)
-    score, reasoning = _parse_score(result, "Tool_Use_Accuracy")
-    return score, {"reasoning": reasoning}
+    result = _retry_llm_judge(llm_judge, prompt)
+    score, reasoning, parse_ok = _parse_score(result, "Tool_Use_Accuracy")
+    details: dict = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def agentic_score(

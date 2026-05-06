@@ -8,7 +8,7 @@ Author: SQLAS Contributors
 
 import logging
 
-from sqlas.core import LLMJudge, _parse_score
+from sqlas.core import LLMJudge, _parse_score, _retry_llm_judge
 
 logger = logging.getLogger(__name__)
 
@@ -109,22 +109,25 @@ Overall_Visualization: [score]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in chart_llm_validation: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    chart_relevance, _ = _parse_score(result, "Chart_Relevance")
-    data_alignment, _ = _parse_score(result, "Data_Alignment")
-    commentary_fit, _ = _parse_score(result, "Commentary_Fit")
-    overall, reasoning = _parse_score(result, "Overall_Visualization")
+    chart_relevance, _, _ok1 = _parse_score(result, "Chart_Relevance")
+    data_alignment,  _, _ok2 = _parse_score(result, "Data_Alignment")
+    commentary_fit,  _, _ok3 = _parse_score(result, "Commentary_Fit")
+    overall, reasoning, _ok4 = _parse_score(result, "Overall_Visualization")
 
-    return overall, {
+    details: dict = {
         "chart_relevance": chart_relevance,
         "data_alignment": data_alignment,
         "commentary_fit": commentary_fit,
         "reasoning": reasoning,
     }
+    if not all([_ok1, _ok2, _ok3, _ok4]):
+        details["llm_parse_warning"] = True
+    return overall, details
 
 
 def visualization_score(

@@ -111,7 +111,7 @@ def context_precision(
 
     overlap = gen_elements & gold_elements
     extra = gen_elements - gold_elements
-    precision = len(overlap) / len(gen_elements)
+    precision = len(overlap) / max(len(gen_elements), 1)
 
     return round(precision, 4), {
         "generated_elements": sorted(gen_elements),
@@ -152,7 +152,7 @@ def context_recall(
 
     overlap = gen_elements & gold_elements
     missing = gold_elements - gen_elements
-    recall = len(overlap) / len(gold_elements)
+    recall = len(overlap) / max(len(gold_elements), 1)
 
     return round(recall, 4), {
         "missing_elements": sorted(missing),
@@ -196,7 +196,7 @@ def entity_recall(
 
     matched = gold_entities & gen_entities
     missing = gold_entities - gen_entities
-    recall = len(matched) / len(gold_entities)
+    recall = len(matched) / max(len(gold_entities), 1)
 
     return round(recall, 4), {
         "missing_entities": sorted(missing),
@@ -259,7 +259,7 @@ def noise_robustness(
     noise_columns = noise & gen["columns"]
     noise_count = len(noise)
 
-    score = max(0.0, 1.0 - (noise_count / len(gen_elements)))
+    score = max(0.0, 1.0 - (noise_count / max(len(gen_elements), 1)))
 
     return round(score, 4), {
         "noise_tables": sorted(noise_tables),

@@ -40,6 +40,10 @@ from typing import Optional, Callable
 _INPUT_DANGER = [
     (r"\b(drop|delete|truncate|alter|insert|update)\s+(table|database|all|every)\b",
      "malicious_sql_intent"),
+    (r"\b(drop|delete|truncate)\s+\w[\w\s]{0,30}(table|database|record|data|row)\b",
+     "malicious_sql_intent"),
+    (r"\b(delete|remove|erase|wipe|clear)\s+(all|every|the)\s+\w",
+     "malicious_sql_intent"),
     (r"\b(dump|export|extract|leak)\s+(all\s+)?(password|passwd|secret|token|api[_\s]key|credential|hash)",
      "credential_extraction"),
     (r"\b(bypass|skip|ignore|disable)\s+(security|auth|authentication|authorization|filter|guardrail|check)",
@@ -138,7 +142,7 @@ class GuardrailPipeline:
                 score -= 0.3
 
         score = max(0.0, round(score, 4))
-        safe = score >= self.input_threshold
+        safe = score > self.input_threshold
 
         return GuardrailResult(
             stage="input",

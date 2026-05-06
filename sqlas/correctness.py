@@ -8,13 +8,85 @@ Core SQL Correctness Metrics.
 Author: SQLAS Contributors
 """
 
+import concurrent.futures
 import logging
+import re
 import time
 import sqlite3
 
 import sqlglot
 
-from sqlas.core import LLMJudge, ExecuteFn, _parse_score
+from sqlas.core import LLMJudge, ExecuteFn, _parse_score, _retry_llm_judge
+
+_NONDETERMINISTIC_RE = re.compile(
+    r'\b(RANDOM|RAND|NOW|CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME'
+    r'|NEWID|UUID|SYSDATE|GETDATE|SYSTIMESTAMP)\s*\(',
+    re.IGNORECASE,
+)
+
+
+def exact_match(generated_sql: str, gold_sql: str) -> float:
+    """
+    Normalized exact match after whitespace/case normalization.
+    Returns 1.0 only when SQL strings are identical post-normalization.
+    Use execution_accuracy for semantic equivalence of different-but-correct SQL.
+    """
+    normalize = lambda s: re.sub(r'\s+', ' ', s.strip().upper())
+    return 1.0 if normalize(generated_sql) == normalize(gold_sql) else 0.0
+
+
+def execution_accuracy_best_of(
+    generated_sql: str,
+    gold_sqls: list[str],
+    db_path: str | None = None,
+    execute_fn: ExecuteFn | None = None,
+) -> tuple[float, dict]:
+    """
+    Multi-gold SQL evaluation: run execution_accuracy against each gold SQL
+    and return the best (highest) score. Used when a question has multiple
+    valid SQL formulations.
+    """
+    if not gold_sqls:
+        return 0.0, {"error": "empty gold_sqls list"}
+    best_score, best_details = 0.0, {}
+    for i, gs in enumerate(gold_sqls):
+        s, d = execution_accuracy(generated_sql, gs, db_path, execute_fn)
+        if s > best_score:
+            best_score = s
+            best_details = d
+            best_details["matched_gold_index"] = i
+    best_details["gold_sqls_count"] = len(gold_sqls)
+    return best_score, best_details
+
+_EXECUTE_FN_TIMEOUT_S = 30
+
+
+def _run_with_timeout(fn, *args, timeout_s: int = _EXECUTE_FN_TIMEOUT_S):
+    """
+    Run fn(*args) with a wall-clock timeout.
+    Uses a background thread for the timeout; falls back to a direct call
+    when the function is thread-unsafe (e.g. a SQLite connection created in
+    the calling thread — SQLite objects cannot cross thread boundaries).
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(fn, *args)
+        try:
+            return future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(
+                f"execute_fn timed out after {timeout_s}s — "
+                "check DB connectivity or query complexity"
+            )
+        except Exception as exc:
+            # SQLite connections are not thread-safe: if the caller passed a
+            # connection-bound execute_fn, fall back to a direct synchronous call.
+            if "thread" in str(exc).lower():
+                logger.debug(
+                    "execute_fn is thread-unsafe (likely SQLite); "
+                    "running synchronously without timeout guard: %s", exc
+                )
+                return fn(*args)
+            raise
 
 logger = logging.getLogger(__name__)
 
@@ -126,11 +198,11 @@ def execution_accuracy(
     if execute_fn is not None:
         try:
             start = time.perf_counter()
-            gold_result = list(execute_fn(gold_sql))
+            gold_result = list(_run_with_timeout(execute_fn, gold_sql))
             gold_time = max((time.perf_counter() - start) * 1000, 0.01)
 
             start = time.perf_counter()
-            pred_result = list(execute_fn(generated_sql))
+            pred_result = list(_run_with_timeout(execute_fn, generated_sql))
             pred_time = max((time.perf_counter() - start) * 1000, 0.01)
         except Exception as e:
             logger.warning("execute_fn failed in execution_accuracy: %s", e)
@@ -155,7 +227,23 @@ def execution_accuracy(
     else:
         return 0.0, {"error": "db_path or execute_fn required for execution_accuracy"}
 
-    output_score = _match_result_sets(pred_result, gold_result)
+    # Scalar path: single row, single numeric value — use tight relative tolerance.
+    # General tol=0.5 is too loose for correlation/average queries (0.87 vs 0.91 both pass).
+    scalar_details: dict = {}
+    if (len(gold_result) == 1 and len(gold_result[0]) == 1
+            and isinstance(gold_result[0][0], (int, float))
+            and len(pred_result) == 1 and len(pred_result[0]) == 1
+            and isinstance(pred_result[0][0], (int, float))):
+        gv = float(gold_result[0][0])
+        pv = float(pred_result[0][0])
+        if gv == 0:
+            output_score = 1.0 if pv == 0 else 0.0
+        else:
+            rel_diff = abs(gv - pv) / abs(gv)
+            output_score = max(0.0, 1.0 - rel_diff * 10)
+        scalar_details = {"gold": gv, "pred": pv}
+    else:
+        output_score = _match_result_sets(pred_result, gold_result)
 
     struct_score = 0.0
     if len(pred_result) == len(gold_result):
@@ -168,13 +256,23 @@ def execution_accuracy(
 
     final = round(0.6 * output_score + 0.2 * struct_score + 0.2 * efficiency, 4)
 
-    return final, {
+    details: dict = {
         "output_score": round(output_score, 4),
         "structural_score": round(struct_score, 4),
         "efficiency_score": round(efficiency, 4),
         "predicted_rows": len(pred_result),
         "gold_rows": len(gold_result),
+        "count_match": len(pred_result) == len(gold_result),
+        "count_ratio": min(len(pred_result), len(gold_result)) / max(len(pred_result), len(gold_result), 1),
     }
+    if scalar_details:
+        details["scalar_comparison"] = scalar_details
+    if _NONDETERMINISTIC_RE.search(generated_sql) or _NONDETERMINISTIC_RE.search(gold_sql):
+        details["nondeterministic_warning"] = (
+            "SQL contains non-deterministic functions (RANDOM, NOW, etc.) — "
+            "results may differ between runs; execution_accuracy may be unreliable"
+        )
+    return final, details
 
 
 def syntax_valid(sql: str, dialect: str = "sqlite") -> float:
@@ -234,13 +332,16 @@ Semantic_Score: [score]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
-        logger.warning("LLM judge failed in semantic_equivalence: %s", e)
-        return 0.0, {"error": str(e)}
+        logger.warning("LLM judge failed in semantic_equivalence after retries: %s", e)
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score, reasoning = _parse_score(result, "Semantic_Score")
-    return score, {"reasoning": reasoning}
+    score, reasoning, parse_ok = _parse_score(result, "Semantic_Score")
+    details = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def result_set_similarity(
@@ -267,8 +368,8 @@ def result_set_similarity(
     """
     if execute_fn is not None:
         try:
-            gold_rows = list(execute_fn(gold_sql))
-            pred_rows = list(execute_fn(generated_sql))
+            gold_rows = list(_run_with_timeout(execute_fn, gold_sql))
+            pred_rows = list(_run_with_timeout(execute_fn, generated_sql))
         except Exception as e:
             logger.warning("execute_fn failed in result_set_similarity: %s", e)
             return 0.0, {"error": str(e)}

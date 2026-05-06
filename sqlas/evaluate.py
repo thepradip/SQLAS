@@ -16,7 +16,8 @@ from sqlas.core import (
     compute_dimension_score, compute_verdict, THRESHOLDS,
     CorrectnessResult, QualityResult, SafetyResult,
 )
-from sqlas.correctness import execution_accuracy, syntax_valid, semantic_equivalence, result_set_similarity
+from sqlas.correctness import execution_accuracy, execution_accuracy_best_of, exact_match, syntax_valid, semantic_equivalence, result_set_similarity
+from sqlas.core import auto_classify_hardness
 from sqlas.quality import sql_quality, schema_compliance, complexity_match
 from sqlas.production import data_scan_efficiency, execution_result, result_coverage
 from sqlas.response import faithfulness, answer_relevance, answer_completeness, fluency
@@ -246,19 +247,36 @@ def evaluate(
     if weights:
         weight_sum = sum(weights.values())
         if abs(weight_sum - 1.0) > 0.01:
-            logger.warning("Custom weights sum to %.4f (expected ~1.0)", weight_sum)
+            logger.warning("Custom weights sum to %.4f — auto-normalizing to 1.0", weight_sum)
+            weights = {k: v / weight_sum for k, v in weights.items()}
 
     scores = SQLASScores()
 
     # ── 1. Core Correctness ─────────────────────────────────────────────
     scores.syntax_valid = syntax_valid(generated_sql)
 
+    # Auto-classify hardness if not provided
+    scores.hardness = auto_classify_hardness(generated_sql)
+
     _can_execute = execute_fn is not None or db_path is not None
-    if gold_sql and _can_execute:
-        ex_acc, ex_details = execution_accuracy(generated_sql, gold_sql, db_path, execute_fn)
+
+    # Multi-gold SQL: use best score across all valid gold queries
+    _gold_sqls: list[str] = []
+    if gold_sql:
+        _gold_sqls = [gold_sql]
+    # Note: evaluate() accepts gold_sql (str) for backward compat;
+    # evaluate_batch() passes gold_sqls (list) from TestCase
+
+    if _gold_sqls and _can_execute:
+        if len(_gold_sqls) == 1:
+            ex_acc, ex_details = execution_accuracy(generated_sql, _gold_sqls[0], db_path, execute_fn)
+        else:
+            ex_acc, ex_details = execution_accuracy_best_of(generated_sql, _gold_sqls, db_path, execute_fn)
         scores.execution_accuracy = ex_acc
         scores.details["execution_accuracy"] = ex_details
         scores.efficiency_score = ex_details.get("efficiency_score", 0.0)
+        # Exact match against primary gold SQL
+        scores.exact_match_score = exact_match(generated_sql, _gold_sqls[0])
     else:
         # v2.1.1 fix: was 1.0 — gave full marks for ANY result even with wrong logic.
         # Without gold_sql we cannot verify correctness, so we use 0.5 (unverified baseline)
@@ -514,28 +532,150 @@ def evaluate_batch(
 
     Returns list of SQLASScores.
     """
-    results = []
-    for tc in test_cases:
-        scores = evaluate(
-            question=tc["question"],
-            generated_sql=tc["generated_sql"],
-            llm_judge=llm_judge,
-            gold_sql=tc.get("gold_sql"),
-            db_path=db_path,
-            execute_fn=execute_fn,
-            response=tc.get("response"),
-            result_data=tc.get("result_data"),
-            valid_tables=valid_tables,
-            valid_columns=valid_columns,
-            schema_context=tc.get("schema_context", schema_context),
-            expected_nonempty=tc.get("expected_nonempty", True),
-            pii_columns=pii_columns,
-            visualization=tc.get("visualization"),
-            validate_chart_with_llm=validate_chart_with_llm,
-            weights=weights,
-        )
+    results: list[SQLASScores] = []
+    for i, tc in enumerate(test_cases):
+        # Multi-gold: use gold_sqls list if provided, fall back to single gold_sql
+        gold_sqls: list[str] | None = tc.get("gold_sqls")
+        gold_sql_single: str | None = tc.get("gold_sql")
+        if gold_sqls and len(gold_sqls) == 1:
+            gold_sql_single = gold_sqls[0]
+            gold_sqls = None
+
+        try:
+            scores = evaluate(
+                question=tc["question"],
+                generated_sql=tc["generated_sql"],
+                llm_judge=llm_judge,
+                gold_sql=gold_sql_single,
+                db_path=db_path,
+                execute_fn=execute_fn,
+                response=tc.get("response"),
+                result_data=tc.get("result_data"),
+                valid_tables=valid_tables,
+                valid_columns=valid_columns,
+                schema_context=tc.get("schema_context", schema_context),
+                expected_nonempty=tc.get("expected_nonempty", True),
+                pii_columns=pii_columns,
+                visualization=tc.get("visualization"),
+                validate_chart_with_llm=validate_chart_with_llm,
+                weights=weights,
+            )
+            # Multi-gold post-processing: upgrade execution_accuracy to best-of score
+            if gold_sqls and len(gold_sqls) > 1 and (execute_fn or db_path):
+                best_acc, best_details = execution_accuracy_best_of(
+                    tc["generated_sql"], gold_sqls, db_path, execute_fn
+                )
+                if best_acc > scores.execution_accuracy:
+                    scores.execution_accuracy = best_acc
+                    scores.details["execution_accuracy"] = best_details
+        except Exception as exc:
+            logger.error(
+                "evaluate_batch: test case %d failed — %s: %s",
+                i, type(exc).__name__, exc
+            )
+            scores = SQLASScores()
+            scores.details["batch_error"] = str(exc)
+            scores.details["batch_error_type"] = type(exc).__name__
+            scores.details["question"] = tc.get("question", "")[:100]
         results.append(scores)
     return results
+
+
+def generate_report(
+    scores_list: list[SQLASScores],
+    questions: list[str] | None = None,
+    output_format: str = "markdown",
+) -> str:
+    """
+    Generate a batch evaluation report — useful for CI artifacts and PR comments.
+
+    Args:
+        scores_list:   List of SQLASScores from evaluate_batch().
+        questions:     Optional list of question strings (parallel to scores_list).
+        output_format: "markdown" | "json"
+
+    Returns:
+        Formatted string report.
+    """
+    import json as _json
+
+    n = len(scores_list)
+    if n == 0:
+        return '{"summary": "no results"}' if output_format == "json" else "No results to report."
+
+    overall_avg  = sum(s.overall_score for s in scores_list) / n
+    pass_count   = sum(1 for s in scores_list if s.verdict == "PASS")
+    pass_rate    = pass_count / n
+
+    _metrics = [
+        "execution_accuracy", "exact_match_score", "semantic_equivalence",
+        "sql_quality", "schema_compliance", "faithfulness",
+        "guardrail_score", "efficiency_score",
+    ]
+    metric_avgs = {
+        m: round(sum(getattr(s, m, 0.0) for s in scores_list) / n, 4)
+        for m in _metrics
+    }
+
+    hardness_counts: dict[str, int] = {}
+    for s in scores_list:
+        h = s.hardness or "unknown"
+        hardness_counts[h] = hardness_counts.get(h, 0) + 1
+
+    if output_format == "json":
+        return _json.dumps({
+            "summary": {
+                "total": n,
+                "pass": pass_count,
+                "fail": n - pass_count,
+                "pass_rate": round(pass_rate, 4),
+                "overall_avg": round(overall_avg, 4),
+                "hardness_distribution": hardness_counts,
+            },
+            "metric_averages": metric_avgs,
+            "results": [s.to_dict() for s in scores_list],
+        }, indent=2, default=str)
+
+    # ── Markdown ──────────────────────────────────────────────────────────────
+    lines = [
+        "# SQLAS Batch Evaluation Report",
+        "",
+        f"| | Value |",
+        f"|---|---|",
+        f"| Tests | {n} |",
+        f"| Pass | {pass_count} ✅ |",
+        f"| Fail | {n - pass_count} ❌ |",
+        f"| Pass Rate | **{pass_rate:.1%}** |",
+        f"| Overall Avg | **{overall_avg:.3f}** |",
+        "",
+        "## Metric Averages",
+        "",
+        "| Metric | Avg |",
+        "|--------|-----|",
+    ]
+    for m, v in metric_avgs.items():
+        label = m.replace("_", " ").title()
+        lines.append(f"| {label} | `{v:.3f}` |")
+
+    if hardness_counts:
+        lines += ["", "## Hardness Distribution", ""]
+        for h in ("easy", "medium", "hard", "extra-hard", "unknown"):
+            if h in hardness_counts:
+                lines.append(f"- **{h}**: {hardness_counts[h]}")
+
+    lines += ["", "## Per-Question Results", "",
+              "| # | Score | Verdict | Hardness | Question |",
+              "|---|------:|---------|----------|----------|"]
+    for i, s in enumerate(scores_list):
+        q = questions[i][:60] if questions and i < len(questions) else f"Q{i + 1}"
+        icon = "✅" if s.verdict == "PASS" else "❌"
+        warn = "⚠️" if any("warning" in k or "error" in k for k in s.details) else ""
+        lines.append(
+            f"| {i + 1} | `{s.overall_score:.3f}` | {icon} {s.verdict} "
+            f"| {s.hardness or '—'} | {q} {warn} |"
+        )
+
+    return "\n".join(lines)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

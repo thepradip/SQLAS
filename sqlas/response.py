@@ -11,7 +11,7 @@ Author: SQLAS Contributors
 import re
 import logging
 
-from sqlas.core import LLMJudge, _parse_score
+from sqlas.core import LLMJudge, _parse_score, _retry_llm_judge
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,16 @@ Faithfulness: [score 0.0-1.0]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in faithfulness: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score, reasoning = _parse_score(result, "Faithfulness")
-    return score, {"reasoning": reasoning}
+    score, reasoning, parse_ok = _parse_score(result, "Faithfulness")
+    details: dict = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def answer_relevance(
@@ -68,13 +71,16 @@ Relevance: [score]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in answer_relevance: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score, reasoning = _parse_score(result, "Relevance")
-    return score, {"reasoning": reasoning}
+    score, reasoning, parse_ok = _parse_score(result, "Relevance")
+    details = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def answer_completeness(
@@ -97,13 +103,16 @@ Completeness: [score]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in answer_completeness: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score, reasoning = _parse_score(result, "Completeness")
-    return score, {"reasoning": reasoning}
+    score, reasoning, parse_ok = _parse_score(result, "Completeness")
+    details = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def fluency(response: str, llm_judge: LLMJudge) -> tuple[float, dict]:
@@ -118,16 +127,20 @@ Respond EXACTLY:
 Fluency: [score 1-5]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in fluency: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score = 3.0
+    score, found = 3.0, False
     for line in result.strip().split("\n"):
         if line.startswith("Fluency:"):
             try:
                 score = float(re.search(r"[\d.]+", line.split(":")[-1]).group())
+                found = True
             except Exception:
                 pass
-    return round(min(score, 5.0) / 5.0, 2), {"raw_score": score}
+    details: dict = {"raw_score": score}
+    if not found:
+        details["llm_parse_warning"] = True
+    return round(min(score, 5.0) / 5.0, 2), details

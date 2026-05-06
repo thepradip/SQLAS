@@ -18,9 +18,65 @@ v2.2.0: Three-dimension scoring replaces the single blended overall_score.
 Author: SQLAS Contributors
 """
 
+import hashlib
+import json
+import logging
 import re
+import time as _time
 from dataclasses import dataclass, field
 from typing import Callable
+
+logger = logging.getLogger(__name__)
+
+# ── LLM Judge cache (opt-in) ──────────────────────────────────────────────────
+_JUDGE_CACHE: dict[str, str] = {}
+_USE_JUDGE_CACHE: bool = False
+
+
+def enable_judge_cache(enabled: bool = True) -> None:
+    """Enable in-memory caching of LLM judge calls. Prevents re-scoring identical prompts."""
+    global _USE_JUDGE_CACHE
+    _USE_JUDGE_CACHE = enabled
+
+
+def clear_judge_cache() -> None:
+    """Clear all cached LLM judge responses."""
+    _JUDGE_CACHE.clear()
+
+
+def _retry_llm_judge(
+    llm_judge: "LLMJudge",
+    prompt: str,
+    max_retries: int = 3,
+    backoff_s: float = 1.0,
+) -> str:
+    """
+    Call llm_judge(prompt) with exponential-backoff retry on transient errors.
+    Caches the result if enable_judge_cache() was called.
+
+    Retry schedule: 1s → 2s → 4s (default).
+    Raises the last exception if all retries fail.
+    """
+    cache_key = hashlib.md5(prompt.encode()).hexdigest() if _USE_JUDGE_CACHE else None
+    if cache_key and cache_key in _JUDGE_CACHE:
+        return _JUDGE_CACHE[cache_key]
+
+    last_exc: Exception = RuntimeError("LLM judge: no attempts made")
+    for attempt in range(max_retries):
+        try:
+            result = llm_judge(prompt)
+            if cache_key is not None:
+                _JUDGE_CACHE[cache_key] = result
+            return result
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "LLM judge attempt %d/%d failed: %s", attempt + 1, max_retries, exc
+            )
+            if attempt < max_retries - 1:
+                _time.sleep(backoff_s * (2 ** attempt))
+
+    raise last_exc
 
 
 # ── Production Composite Weights (v1 — 15 metrics) ────────────────────────
@@ -336,11 +392,13 @@ class TestCase:
     """A single evaluation test case."""
     question: str
     gold_sql: str | None = None
+    gold_sqls: list[str] | None = None   # multiple valid gold SQLs — eval takes best score
     expected_tables: list[str] | None = None
     expects_join: bool = False
     expected_nonempty: bool = True
     category: str = "general"
-    schema_context: str = ""   # per-test schema override (useful for multi-DB suites)
+    hardness: str = ""   # "easy"|"medium"|"hard"|"extra-hard" — auto-set if empty
+    schema_context: str = ""
 
 
 @dataclass
@@ -450,6 +508,11 @@ class SQLASScores:
     # Composite (backward compatible — weighted combo of three dimensions)
     overall_score: float = 0.0
     # 0.50 * correctness_score + 0.30 * quality_score + 0.20 * safety_composite_score
+
+    # Extra metrics (v2.7)
+    exact_match_score: float = 0.0    # 1.0 if generated SQL exactly matches gold (normalized)
+    hardness: str = ""                # auto-classified: easy|medium|hard|extra-hard
+
     details: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -464,7 +527,48 @@ class SQLASScores:
         d["execution_time_ms"] = self.execution_time_ms
         d["result_row_count"] = self.result_row_count
         d["row_explosion_detected"] = self.row_explosion_detected
+        d["exact_match_score"] = self.exact_match_score
+        d["hardness"] = self.hardness
+        d["verdict"] = self.verdict
         return d
+
+    def to_json(self, indent: int = 2) -> str:
+        """Serialize scores to a JSON string — useful for CI artifact storage."""
+        d = self.to_dict()
+        d["details"] = self.details
+        return json.dumps(d, indent=indent, default=str)
+
+    def to_markdown_report(self, question: str = "", sql: str = "") -> str:
+        """Single-query Markdown report — embed in PRs, Jupyter, or CI logs."""
+        icon = "✅" if self.verdict == "PASS" else "❌"
+        lines = [
+            f"## SQLAS Evaluation {icon}  `{self.overall_score:.3f}`  —  **{self.verdict}**",
+        ]
+        if question:
+            lines.append(f"> **Q:** {question}")
+        if sql:
+            lines.append(f"> **SQL:** `{sql[:120]}`")
+        if self.hardness:
+            lines.append(f"> **Hardness:** {self.hardness}")
+        lines += [
+            "",
+            "| Metric | Score |",
+            "|--------|------:|",
+            f"| Execution Accuracy | `{self.execution_accuracy:.3f}` |",
+            f"| Exact Match | `{self.exact_match_score:.3f}` |",
+            f"| Semantic Equivalence | `{self.semantic_equivalence:.3f}` |",
+            f"| SQL Quality | `{self.sql_quality:.3f}` |",
+            f"| Schema Compliance | `{self.schema_compliance:.3f}` |",
+            f"| Faithfulness | `{self.faithfulness:.3f}` |",
+            f"| Guardrail Score | `{self.guardrail_score:.3f}` |",
+            f"| Efficiency | `{self.efficiency_score:.3f}` |",
+        ]
+        warn_keys = [k for k in self.details if "warning" in k or "error" in k]
+        if warn_keys:
+            lines += ["", "**Warnings / Errors:**"]
+            for k in warn_keys:
+                lines.append(f"- `{k}`: {self.details[k]}")
+        return "\n".join(lines)
 
     def summary(self) -> str:
         """Human-readable summary."""
@@ -507,7 +611,7 @@ LLMJudge = Callable[[str], str]
 ExecuteFn = Callable[[str], list[tuple]]
 
 
-def _parse_score(result: str, key: str) -> tuple[float, str]:
+def _parse_score(result: str, key: str) -> tuple[float, str, bool]:
     """Shared helper to extract a score and reasoning from LLM judge output.
 
     Looks for lines like 'Key: 0.85' and 'Reasoning: ...' in the result text.
@@ -517,23 +621,62 @@ def _parse_score(result: str, key: str) -> tuple[float, str]:
         key: The score key to look for (e.g. 'Faithfulness', 'Relevance')
 
     Returns:
-        (score clamped to 0.0–1.0, reasoning string)
+        (score clamped to 0.0–1.0, reasoning string, parse_ok bool)
+        parse_ok=False means the key was not found or numeric parsing failed —
+        the caller should include "llm_parse_warning": True in its details dict
+        so callers can distinguish a genuine 0.0 score from a parse failure.
     """
-    score, reasoning = 0.0, ""
+    score, reasoning, found = 0.0, "", False
     for line in result.strip().split("\n"):
         if line.startswith(key + ":"):
             try:
                 score = float(re.search(r"[\d.]+", line.split(":")[-1]).group())
+                found = True
             except Exception:
                 pass
         if line.startswith("Reasoning:"):
             reasoning = line.split(":", 1)[-1].strip()
-    return min(score, 1.0), reasoning
+    return min(score, 1.0), reasoning, found
+
+
+def auto_classify_hardness(sql: str) -> str:
+    """
+    Auto-classify query hardness following BIRD benchmark criteria.
+
+    Returns: "easy" | "medium" | "hard" | "extra-hard"
+
+    Criteria (from BIRD paper):
+      easy       — simple SELECT, 0 JOINs, ≤1 condition
+      medium     — 1 JOIN or GROUP BY, ≤2 conditions
+      hard       — 2 JOINs, subquery, HAVING, or window function
+      extra-hard — CTE + complex nesting, 3+ JOINs, deeply nested subqueries
+    """
+    upper = sql.upper()
+    join_count   = len(re.findall(r'\bJOIN\b', upper))
+    select_count = upper.count('SELECT')
+    nested       = max(select_count - 1, 0)
+    has_cte      = bool(re.match(r'\s*WITH\b', upper))
+    has_group    = 'GROUP BY' in upper
+    has_having   = 'HAVING' in upper
+    has_window   = bool(re.search(r'\bOVER\s*\(', upper))
+    conditions   = len(re.findall(r'\b(?:AND|OR)\b', upper)) + (1 if 'WHERE' in upper else 0)
+
+    if has_cte and (join_count >= 2 or nested >= 2) or nested >= 3 or (join_count >= 3 and has_group):
+        return "extra-hard"
+    if has_cte or nested >= 2 or join_count >= 2 or (join_count >= 1 and has_having) or has_window:
+        return "hard"
+    if join_count == 1 or has_group or conditions >= 2:
+        return "medium"
+    return "easy"
 
 
 def compute_composite_score(scores: SQLASScores, weights: dict | None = None) -> float:
-    """Compute weighted overall SQLAS score."""
-    w = weights or WEIGHTS
+    """Compute weighted overall SQLAS score. Auto-normalizes weights if they don't sum to 1.0."""
+    w = dict(weights or WEIGHTS)
+    weight_sum = sum(w.values())
+    if abs(weight_sum - 1.0) > 0.01:
+        logger.warning("Weights sum to %.4f — auto-normalizing to 1.0", weight_sum)
+        w = {k: v / weight_sum for k, v in w.items()}
     total = 0.0
     for metric, weight in w.items():
         val = getattr(scores, metric, 0.0)

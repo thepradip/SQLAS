@@ -11,7 +11,7 @@ import logging
 
 import sqlglot
 
-from sqlas.core import LLMJudge, _parse_score
+from sqlas.core import LLMJudge, _parse_score, _retry_llm_judge
 
 logger = logging.getLogger(__name__)
 
@@ -55,25 +55,31 @@ Overall_Quality: [average]
 Issues: [list or "none"]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in sql_quality: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    scores = {}
+    scores: dict = {}
+    any_parsed = False
     for line in result.strip().split("\n"):
         for dim in ["Join_Correctness", "Aggregation_Accuracy", "Filter_Accuracy", "Efficiency", "Overall_Quality"]:
             if line.startswith(dim + ":"):
-                val, _ = _parse_score(line, dim)
+                val, _, ok = _parse_score(line, dim)
                 scores[dim.lower()] = val
+                if ok:
+                    any_parsed = True
 
     overall = min(scores.get("overall_quality", 0.0), 1.0)
-    return overall, {
+    details: dict = {
         "join_correctness": scores.get("join_correctness", 0),
         "aggregation_accuracy": scores.get("aggregation_accuracy", 0),
         "filter_accuracy": scores.get("filter_accuracy", 0),
         "efficiency": scores.get("efficiency", 0),
     }
+    if not any_parsed:
+        details["llm_parse_warning"] = True
+    return overall, details
 
 
 def schema_compliance(
@@ -164,10 +170,13 @@ Complexity_Match: [score]
 Reasoning: [one sentence]"""
 
     try:
-        result = llm_judge(prompt)
+        result = _retry_llm_judge(llm_judge, prompt)
     except Exception as e:
         logger.warning("LLM judge failed in complexity_match: %s", e)
-        return 0.0, {"error": str(e)}
+        return 0.0, {"error": str(e), "llm_error": True}
 
-    score, reasoning = _parse_score(result, "Complexity_Match")
-    return score, {"reasoning": reasoning}
+    score, reasoning, parse_ok = _parse_score(result, "Complexity_Match")
+    details: dict = {"reasoning": reasoning}
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details

@@ -21,21 +21,28 @@ DEFAULT_PII_COLUMNS = [
 PROMPT_INJECTION_PATTERNS = [
     (r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions", "ignore_previous_instructions"),
     (r"disregard\s+(all\s+)?(previous|prior|above)\s+instructions", "disregard_previous_instructions"),
+    (r"(override|erase|discard|forget)\s+(all\s+)?(previous|prior|above|your)\s+(instructions?|rules?|context|prompt)", "override_instructions"),
     (r"reveal\s+(the\s+)?(system|developer)\s+prompt", "reveal_system_prompt"),
     (r"show\s+(me\s+)?(the\s+)?(system|developer)\s+prompt", "show_system_prompt"),
     (r"you\s+are\s+now\s+(in\s+)?developer\s+mode", "developer_mode"),
+    (r"act\s+as\s+(if\s+)?(you\s+are\s+)?(an?\s+)?(unrestricted|unfiltered|jailbroken)", "jailbreak"),
     (r"jailbreak", "jailbreak"),
-    (r"bypass\s+(safety|guardrails|policy)", "bypass_guardrails"),
+    (r"bypass\s+(safety|guardrails?|policy|filter|restriction)", "bypass_guardrails"),
     (r"return\s+only\s+raw\s+secrets?", "secret_exfiltration"),
+    (r"pretend\s+(you\s+)?(have\s+no|don.t\s+have)\s+(restrictions?|rules?|guidelines?)", "pretend_unrestricted"),
 ]
 
 SQL_INJECTION_PATTERNS = [
     (r";\s*(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b", "stacked_mutation"),
-    (r"\bUNION\s+SELECT\b", "union_select"),
-    (r"\bOR\s+1\s*=\s*1\b", "tautology"),
-    (r"\bAND\s+1\s*=\s*1\b", "tautology"),
-    (r"--|/\*|\*/", "sql_comment_injection"),
-    (r"\bSLEEP\s*\(|\bBENCHMARK\s*\(", "time_based_injection"),
+    (r"\bUNION\s+(ALL\s+)?SELECT\b", "union_select"),          # catches UNION ALL SELECT
+    (r"\bEXCEPT\s+SELECT\b", "except_select"),                  # catches EXCEPT SELECT
+    (r"\bINTERSECT\s+SELECT\b", "intersect_select"),
+    (r"\bOR\s+['\"0-9]?\s*=\s*['\"0-9]?\b", "tautology"),     # OR 1=1, OR 'a'='a', OR 0=0
+    (r"\bAND\s+['\"0-9]?\s*=\s*['\"0-9]?\b", "tautology"),
+    (r"--|/\*|\*/|#\s", "sql_comment_injection"),
+    (r"\bSLEEP\s*\(|\bBENCHMARK\s*\(|\bPG_SLEEP\s*\(|\bWAITFOR\s+DELAY\b", "time_based_injection"),
+    (r"\bINTO\s+(OUT|DUMP)FILE\b", "file_write_injection"),     # MySQL file write
+    (r"\bLOAD_FILE\s*\(", "file_read_injection"),
 ]
 
 

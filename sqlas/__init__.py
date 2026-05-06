@@ -52,8 +52,16 @@ from sqlas.agentic import (
 )
 from sqlas.cache import cache_hit_score, tokens_saved_score, few_shot_score
 from sqlas.runner import run_suite
+from sqlas.failure_analysis import (
+    FailureCategory, FailureAnalysis, classify_failure,
+)
+from sqlas.correctness import exact_match, execution_accuracy_best_of
+from sqlas.core import (
+    auto_classify_hardness, enable_judge_cache, clear_judge_cache,
+)
+from sqlas.evaluate import generate_report
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 __author__ = "SQLAS Contributors"
 
 __all__ = [
