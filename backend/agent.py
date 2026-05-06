@@ -152,12 +152,16 @@ def _build_system_prompt(db_context: str, few_shot_section: str = "") -> str:
 5. Use meaningful column aliases (AS keyword).
 6. For multi-table queries involving 1:N relationships, aggregate the N-side first, then JOIN to avoid row explosion.
 7. Use CTEs (WITH clauses) for complex multi-step logic.
-8. Default LIMIT 100 for detail queries. Aggregated summaries need no limit.
-9. Handle NULLs appropriately (COALESCE, IS NOT NULL, etc.) — check the null counts in the stats.
+8. Only add LIMIT when the question explicitly asks for "top N" or a sample. If the question requests all results, totals, rankings, or a full analysis — do NOT add LIMIT.
+9. Handle NULLs appropriately (COALESCE, IS NOT NULL, etc.) — check the null counts in the stats. Always add WHERE col IS NOT NULL before aggregating nullable columns to avoid skewed results.
 10. For percentages: CAST to REAL to avoid integer division.
 11. ROUND numeric outputs to 2 decimal places.
 12. Always ORDER BY for deterministic results.
 13. Use indexes — prefer filtering on indexed columns for large tables.
+14. For currency and formatted number columns: always use REPLACE(REPLACE(col,'$',''),',','') before casting to numeric. A single REPLACE misses commas and produces wrong totals.
+15. Use SUM() for totals and credit limits, not MAX(). Use SUM(col) not AVG(col) for attempt or event count columns (e.g. Failed_Attempts, error_count).
+16. Never apply TRIM() to numeric columns — it is invalid SQL. Only use TRIM() on text columns.
+17. If a query returns 0 rows, explain why based on the data — do not just say "no results found."
 
 ## Output Format
 Return ONLY the SQL inside a ```sql``` block. No explanations outside the block.

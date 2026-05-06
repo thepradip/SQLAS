@@ -74,6 +74,8 @@ class SQLASScores:
     result_row_count: int = 0
     empty_result_penalty: float = 0.0        # 1 if non-empty when expected
     row_explosion_detected: bool = False     # Suspicious row count from bad JOIN
+    row_count_match: float = 0.0             # COUNT(*) comparison pred vs gold
+    table_identity_score: float = 0.0        # FROM/JOIN tables match expected_tables
 
     # ── 4. Response Quality (Narration) ──────────────────────────────────
     faithfulness: float = 0.0                # Claims grounded in data
@@ -320,8 +322,23 @@ def eval_execution_accuracy(predicted_sql: str, gold_sql: str, db_path: str) -> 
         "gold_time_ms": round(gold_time, 2),
     }
 
-    # ── Component 1: Output correctness (row-by-row numeric match) ──
-    output_score = _match_result_sets(pred_result, gold_result)
+    # ── Component 1: Output correctness ──────────────────────────────────────
+    # Scalar path: single row, single numeric value — use tight relative tolerance
+    # (catches correlation/average/count queries where tol=1.0 is far too loose)
+    if (len(gold_result) == 1 and len(gold_result[0]) == 1
+            and isinstance(gold_result[0][0], (int, float))
+            and len(pred_result) == 1 and len(pred_result[0]) == 1
+            and isinstance(pred_result[0][0], (int, float))):
+        gold_val = float(gold_result[0][0])
+        pred_val = float(pred_result[0][0])
+        if gold_val == 0:
+            output_score = 1.0 if pred_val == 0 else 0.0
+        else:
+            rel_diff = abs(gold_val - pred_val) / abs(gold_val)
+            output_score = max(0.0, 1.0 - rel_diff * 10)
+        details["scalar_comparison"] = {"gold": gold_val, "pred": pred_val}
+    else:
+        output_score = _match_result_sets(pred_result, gold_result)
 
     # ── Component 2: Structural correctness ─────────────────────────
     struct_score = 0.0
@@ -344,6 +361,68 @@ def eval_execution_accuracy(predicted_sql: str, gold_sql: str, db_path: str) -> 
     })
 
     return final_score, details
+
+
+def eval_row_count_match(predicted_sql: str, gold_sql: str, db_path: str) -> tuple[float, dict]:
+    """
+    Run COUNT(*) on both SQLs and compare.
+    Catches LIMIT truncation that row-by-row matching silently scores as correct
+    (e.g. 100 rows returned when 839 expected → execution_accuracy=1.0 was wrong).
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        pred_count = conn.execute(f"SELECT COUNT(*) FROM ({predicted_sql})").fetchone()[0]
+        gold_count = conn.execute(f"SELECT COUNT(*) FROM ({gold_sql})").fetchone()[0]
+    except Exception as e:
+        return 0.5, {"error": str(e), "note": "count_check_skipped"}
+    finally:
+        conn.close()
+
+    if gold_count == 0:
+        score = 1.0 if pred_count == 0 else 0.5
+    else:
+        score = min(pred_count, gold_count) / max(pred_count, gold_count)
+
+    return round(score, 4), {
+        "pred_count": pred_count,
+        "gold_count": gold_count,
+        "count_match": pred_count == gold_count,
+        "count_ratio": round(score, 4),
+    }
+
+
+def eval_table_identity(sql: str, expected_tables: list) -> tuple[float, dict]:
+    """
+    Parse FROM/JOIN clauses and verify tables match expected_tables.
+    One wrong table = immediate flag. Catches silent table name errors
+    (e.g. accounting_transactions used instead of accounting).
+    """
+    if not expected_tables:
+        return 1.0, {"note": "no expected_tables defined"}
+
+    try:
+        parsed = sqlglot.parse_one(sql, dialect="sqlite")
+    except Exception:
+        return 0.0, {"error": "parse_failed"}
+
+    used_tables = {t.name.lower() for t in parsed.find_all(sqlglot.exp.Table) if t.name}
+    expected_lower = {t.lower() for t in expected_tables}
+
+    wrong_tables = used_tables - expected_lower
+    missing_tables = expected_lower - used_tables
+
+    if not wrong_tables and not missing_tables:
+        score = 1.0
+    else:
+        correct = len(used_tables & expected_lower)
+        score = correct / max(len(expected_lower), len(used_tables))
+
+    return round(score, 4), {
+        "used_tables": sorted(used_tables),
+        "expected_tables": sorted(expected_lower),
+        "wrong_tables": sorted(wrong_tables),
+        "missing_tables": sorted(missing_tables),
+    }
 
 
 def eval_efficiency(predicted_sql: str, gold_sql: str, db_path: str) -> tuple[float, dict]:
@@ -1081,6 +1160,18 @@ async def evaluate_single(
     scan_score, scan_details = eval_data_scan_efficiency(sql, scores.result_row_count)
     scores.data_scan_efficiency = scan_score
     scores.details["data_scan"] = scan_details
+
+    # Row count match — COUNT(*) comparison catches LIMIT truncation
+    if test_case.gold_sql and db_path:
+        rc_score, rc_details = eval_row_count_match(sql, test_case.gold_sql, db_path)
+        scores.row_count_match = rc_score
+        scores.details["row_count_match"] = rc_details
+
+    # Table identity — FROM/JOIN tables must match expected_tables
+    if test_case.expected_tables:
+        ti_score, ti_details = eval_table_identity(sql, test_case.expected_tables)
+        scores.table_identity_score = ti_score
+        scores.details["table_identity"] = ti_details
 
     # ══════════════════════════════════════════════════════════════════════
     # 4. RESPONSE QUALITY (only if execution succeeded)

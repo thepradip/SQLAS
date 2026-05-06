@@ -64,8 +64,11 @@ These are the two most common causes of first-attempt failure. The plan prevents
 ## SQL Rules
 - Only SELECT or WITH (CTE) + SELECT.
 - ROUND numeric output to 2 decimal places.
-- Default LIMIT 100 for detail queries; no LIMIT for aggregations.
-- Handle NULLs: check null counts in describe_table output.
+- Only add LIMIT when the question asks for top-N or a sample. If the question asks for all results, rankings, or totals — do NOT add LIMIT.
+- Handle NULLs: check null counts in describe_table output. Add WHERE col IS NOT NULL before aggregating nullable columns.
+- For currency columns: REPLACE(REPLACE(col,'$',''),',','') before CAST — never use a single REPLACE.
+- Use SUM() for totals, not MAX(). Use SUM() not AVG() for attempt or event count columns.
+- Never apply TRIM() to numeric columns.
 
 ## Answer Rules
 - Direct answer first: "987 patients have high blood pressure."
