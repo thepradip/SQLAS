@@ -96,10 +96,23 @@ async def traced_run_query(
             gen_latency_ms = (time.perf_counter() - gen_start) * 1000
             sql_metrics = compute_sql_metrics(sql)
 
+            # ── Pre-execution validation & auto-correction ────────────────
+            from sql_validator import validate_and_fix
+            validation = validate_and_fix(sql, user_query=user_query)
+            if validation.was_auto_fixed:
+                sql = validation.sql
+
+            validation_attrs = {
+                "validation.issues": len(validation.issues),
+                "validation.auto_fixed": validation.was_auto_fixed,
+                "validation.codes": ",".join(i.code for i in validation.issues) or "none",
+            }
+
             gen_span.set_outputs({"sql": sql})
             gen_span.set_attributes({
                 "generation_latency_ms": round(gen_latency_ms, 2),
                 **{f"sql.{k}": v for k, v in sql_metrics.items()},
+                **validation_attrs,
             })
 
         # ── Step 2: SQL Execution ───────────────────────────────────────────

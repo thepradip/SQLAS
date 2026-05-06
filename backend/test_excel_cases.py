@@ -628,6 +628,150 @@ check("N3: scalar_comparison shows different values",
       d_flag["scalar_comparison"]["gold"] != d_flag["scalar_comparison"]["pred"])
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GROUP O — sql_validator: pre-execution auto-fix and warnings
+# ══════════════════════════════════════════════════════════════════════════════
+section("O — sql_validator: pre-execution enforcement")
+
+from sql_validator import validate_and_fix
+
+# O1: LIMIT auto-removed when question is not top-N
+r = validate_and_fix("SELECT * FROM users LIMIT 100", user_query="Find all users")
+check("O1: LIMIT removed from non-top-N query", "LIMIT" not in r.sql)
+check("O2: auto_fixed=True", r.was_auto_fixed)
+check("O3: LIMIT_TRUNCATION issue code", any(i.code == "LIMIT_TRUNCATION" for i in r.issues))
+
+# O4: LIMIT kept when question asks for top-N
+r2 = validate_and_fix("SELECT * FROM users LIMIT 10", user_query="Show top 10 users")
+check("O4: LIMIT preserved for top-N question", "LIMIT" in r2.sql)
+check("O5: no LIMIT_TRUNCATION issue for top-N", not any(i.code == "LIMIT_TRUNCATION" for i in r2.issues))
+
+# O6: TRIM on numeric column auto-removed
+r3 = validate_and_fix(
+    "SELECT COUNT(*) FROM accounting WHERE TRIM(Failed_Attempts) <> ''",
+    column_types={"accounting.Failed_Attempts": "INTEGER"}
+)
+check("O6: TRIM removed from INTEGER column", "TRIM" not in r3.sql)
+check("O7: TRIM_ON_NUMERIC issue raised", any(i.code == "TRIM_ON_NUMERIC" for i in r3.issues))
+check("O8: auto_fixed=True for TRIM", r3.was_auto_fixed)
+
+# O9: TRIM kept on text column
+r4 = validate_and_fix(
+    "SELECT TRIM(gender) FROM users",
+    column_types={"users.gender": "TEXT"}
+)
+check("O9: TRIM preserved on TEXT column", "TRIM" in r4.sql)
+check("O10: no TRIM_ON_NUMERIC issue for text", not any(i.code == "TRIM_ON_NUMERIC" for i in r4.issues))
+
+# O11: Single REPLACE currency warning
+r5 = validate_and_fix("SELECT SUM(CAST(REPLACE(credit_limit, '$', '') AS REAL)) FROM cards")
+check("O11: SINGLE_REPLACE_CURRENCY warning raised",
+      any(i.code == "SINGLE_REPLACE_CURRENCY" for i in r5.issues))
+
+# O12: Double REPLACE clean
+r6 = validate_and_fix("SELECT SUM(CAST(REPLACE(REPLACE(credit_limit,'$',''),',','') AS REAL)) FROM cards")
+check("O12: double REPLACE → no currency warning",
+      not any(i.code == "SINGLE_REPLACE_CURRENCY" for i in r6.issues))
+
+# O13: MAX on total column warning
+r7 = validate_and_fix("SELECT MAX(credit_limit) FROM cards")
+check("O13: MAX_INSTEAD_OF_SUM warning on total column",
+      any(i.code == "MAX_INSTEAD_OF_SUM" for i in r7.issues))
+
+# O14: JOIN without aggregation warning
+r8 = validate_and_fix(
+    "SELECT p.subject_id, a.hadm_id FROM patients p JOIN admissions a ON p.subject_id = a.subject_id"
+)
+check("O14: JOIN_WITHOUT_AGGREGATION warning on 1:N join",
+      any(i.code == "JOIN_WITHOUT_AGGREGATION" for i in r8.issues))
+
+# O15: JOIN with GROUP BY — no warning
+r9 = validate_and_fix(
+    "SELECT p.subject_id, COUNT(a.hadm_id) FROM patients p JOIN admissions a ON p.subject_id = a.subject_id GROUP BY p.subject_id"
+)
+check("O15: no JOIN warning when GROUP BY present",
+      not any(i.code == "JOIN_WITHOUT_AGGREGATION" for i in r9.issues))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GROUP P — sqlas failure_analysis: classify_failure maps scores to categories
+# ══════════════════════════════════════════════════════════════════════════════
+section("P — sqlas failure_analysis: classify_failure")
+
+sys.path.insert(0, '/Users/pradip/Desktop/Learning/Claude/Infogain/sqlas-package')
+from sqlas.failure_analysis import classify_failure, FailureCategory
+
+# P1: LIMIT truncation correctly classified (the Aniket false-PASS case)
+fa = classify_failure(
+    sql="SELECT id FROM users LIMIT 100",
+    scores={"execution_accuracy": 1.0, "row_count_match": 0.12},
+    details={"row_count_match": {"pred_count": 100, "gold_count": 839}},
+)
+check("P1: LIMIT truncation classified correctly",
+      fa.primary == FailureCategory.LIMIT_TRUNCATION, f"primary={fa.primary}")
+check("P2: LIMIT_TRUNCATION in categories", FailureCategory.LIMIT_TRUNCATION in fa.categories)
+check("P3: evidence contains row counts", "100" in fa.evidence.get("limit_truncation", ""))
+
+# P4: Wrong table name
+fa2 = classify_failure(
+    sql="SELECT SUM(Amount) FROM accounting_transactions",
+    scores={"table_identity_score": 0.0},
+    details={"table_identity": {"wrong_tables": ["accounting_transactions"], "missing_tables": ["accounting"]}},
+)
+check("P4: wrong table → WRONG_TABLE primary", fa2.primary == FailureCategory.WRONG_TABLE)
+check("P5: wrong tables in evidence", "accounting_transactions" in str(fa2.evidence))
+
+# P6: Schema hallucination (invented column 'n')
+fa3 = classify_failure(
+    sql="SELECT n FROM counts",
+    scores={"schema_compliance": 0.5},
+    details={"schema_compliance": {"invalid_tables": ["counts"], "invalid_columns": ["n"]}},
+)
+check("P6: hallucinated table → SCHEMA_HALLUCINATION",
+      fa3.primary == FailureCategory.SCHEMA_HALLUCINATION)
+
+# P7: Currency not cleaned
+fa4 = classify_failure(
+    sql="SELECT SUM(CAST(REPLACE(credit_limit,'$','') AS REAL)) FROM cards",
+    scores={"execution_accuracy": 0.3},
+)
+check("P7: single REPLACE → CURRENCY_NOT_CLEANED in categories",
+      FailureCategory.CURRENCY_NOT_CLEANED in fa4.categories)
+
+# P8: TRIM on numeric
+fa5 = classify_failure(
+    sql="SELECT COUNT(*) FROM labevents WHERE TRIM(valuenum) <> ''",
+    scores={"execution_accuracy": 0.9},
+)
+check("P8: TRIM(valuenum) → TRIM_ON_NUMERIC in categories",
+      FailureCategory.TRIM_ON_NUMERIC in fa5.categories)
+
+# P9: Unsafe query
+fa6 = classify_failure(
+    sql="DELETE FROM patients WHERE 1=1",
+    scores={"read_only_compliance": 0.0},
+)
+check("P9: DDL/DML → UNSAFE_QUERY primary", fa6.primary == FailureCategory.UNSAFE_QUERY)
+
+# P10: Correct query
+fa7 = classify_failure(
+    sql="SELECT COUNT(*) FROM patients WHERE anchor_age > 80",
+    scores={"execution_accuracy": 1.0, "schema_compliance": 1.0,
+            "row_count_match": 1.0, "table_identity_score": 1.0,
+            "faithfulness": 1.0, "data_scan_efficiency": 0.9},
+)
+check("P10: clean query → CORRECT primary", fa7.primary == FailureCategory.CORRECT)
+check("P11: passed=True for correct query", fa7.passed)
+check("P12: summary starts with PASS", fa7.summary().startswith("PASS"))
+
+# P13: top_hint returns actionable string
+fa_limit = classify_failure(
+    sql="SELECT id FROM users LIMIT 100",
+    scores={"row_count_match": 0.12},
+    details={"row_count_match": {"pred_count": 100, "gold_count": 839}},
+)
+check("P13: top_hint returns non-empty actionable string",
+      len(fa_limit.top_hint()) > 10)
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RESULTS
 # ══════════════════════════════════════════════════════════════════════════════
 print(f"\n{'='*62}")
