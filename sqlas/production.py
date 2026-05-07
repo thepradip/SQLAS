@@ -2,11 +2,16 @@
 Production Execution Metrics.
 - Data Scan Efficiency (full scan detection)
 - Execution Result (success, empty result, row explosion)
+- Query Cost Estimation (bytes scanned, partitions, index use)
+- Data Freshness Awareness (stale/snapshot data detection)
 
 Author: SQLAS Contributors
 """
 
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def data_scan_efficiency(
@@ -114,6 +119,215 @@ def result_coverage(
         "query_type": "detail",
         "note": "Detail query truncated — first N rows returned, may not be exhaustive",
     }
+
+
+def query_cost_estimate(
+    sql: str,
+    schema_stats: "dict | None" = None,
+    explain_output: str = "",
+) -> "tuple[float, dict]":
+    """
+    Estimate the relative cost-efficiency of a query for warehouse-style engines.
+
+    Evaluates static cost signals without executing the query:
+    - SELECT * penalizes bytes scanned (reads all columns)
+    - Missing WHERE on large tables means full partition scan
+    - JOINs without filters on large fact tables indicate fan-out risk
+    - LIMIT absence on non-aggregate queries wastes result bandwidth
+    - EXPLAIN plan output analyzed when provided
+
+    If schema_stats is provided, uses table row estimates for cost modeling.
+
+    Args:
+        sql:           Generated SQL.
+        schema_stats:  Optional dict: {table_name: {"rows": int, "partitioned": bool}}.
+        explain_output: Optional EXPLAIN/EXPLAIN ANALYZE output text.
+
+    Returns:
+        (score 0.0–1.0, {cost_signals, estimated_relative_cost})
+        score 1.0 = efficient query; 0.0 = very expensive / full scan of large table.
+    """
+    upper = sql.upper()
+    cost_signals: list[str] = []
+    score = 1.0
+
+    # SELECT * — scans all columns even if only one is needed
+    if re.search(r"\bSELECT\s+\*", upper):
+        cost_signals.append("SELECT * — reads all columns; specify only needed columns")
+        score -= 0.2
+
+    # No filter, no aggregation, no limit — full table scan
+    has_where = "WHERE" in upper
+    has_group = "GROUP BY" in upper
+    has_limit = "LIMIT" in upper or "FETCH FIRST" in upper or "TOP " in upper
+
+    if not has_where and not has_group and not has_limit:
+        cost_signals.append("No WHERE/GROUP BY/LIMIT — full table scan")
+        score -= 0.3
+
+    # Unfiltered JOIN — potential cartesian fan-out
+    if "JOIN" in upper and not has_where:
+        cost_signals.append("JOIN without WHERE filter — potential large intermediate result")
+        score -= 0.2
+
+    # Cross join
+    if re.search(r"\bCROSS\s+JOIN\b", upper):
+        cost_signals.append("CROSS JOIN — cartesian product, extremely expensive")
+        score -= 0.4
+
+    # LIKE with leading wildcard — can't use indexes
+    if re.search(r"LIKE\s+'%", upper):
+        cost_signals.append("LIKE '%...' — leading wildcard prevents index use")
+        score -= 0.1
+
+    # Non-SARGable OR conditions
+    if re.search(r"\bOR\b.*\bOR\b", upper) and not has_where:
+        cost_signals.append("Multiple OR conditions without base WHERE — index skip")
+        score -= 0.1
+
+    # Schema-stats cost modeling
+    large_table_scanned = False
+    if schema_stats:
+        try:
+            import sqlglot as _sg
+            parsed = _sg.parse_one(sql)
+            for table in parsed.find_all(_sg.exp.Table):
+                name = table.name.lower() if table.name else None
+                if name and name in {k.lower() for k in schema_stats}:
+                    stats = schema_stats.get(name) or schema_stats.get(name.upper(), {})
+                    rows = int(stats.get("rows", 0))
+                    partitioned = bool(stats.get("partitioned", False))
+                    if rows > 10_000_000 and not has_where:
+                        cost_signals.append(
+                            f"Full scan of large table '{name}' ({rows:,} rows)"
+                        )
+                        score -= 0.3
+                        large_table_scanned = True
+                    elif rows > 10_000_000 and partitioned and not has_where:
+                        cost_signals.append(
+                            f"Unpartitioned scan of partitioned table '{name}'"
+                        )
+                        score -= 0.2
+        except Exception:
+            pass
+
+    # EXPLAIN plan analysis
+    if explain_output:
+        lower_explain = explain_output.lower()
+        if "seq scan" in lower_explain or "full table scan" in lower_explain:
+            cost_signals.append("EXPLAIN: sequential scan detected — consider adding index")
+            score -= 0.2
+        if "hash join" in lower_explain and "rows=" in lower_explain:
+            # Look for very large hash join estimates
+            match = re.search(r"hash join.*rows=(\d+)", lower_explain)
+            if match and int(match.group(1)) > 1_000_000:
+                cost_signals.append(f"EXPLAIN: large hash join ({match.group(1)} rows)")
+                score -= 0.1
+
+    score = max(0.0, round(score, 4))
+    relative_cost = "low" if score >= 0.8 else "medium" if score >= 0.5 else "high"
+
+    return score, {
+        "cost_signals": cost_signals or ["none — query looks efficient"],
+        "estimated_relative_cost": relative_cost,
+        "large_table_scanned": large_table_scanned,
+        "has_explain": bool(explain_output),
+    }
+
+
+def data_freshness_score(
+    question: str,
+    sql: str,
+    response: str,
+    llm_judge: "object",
+    schema_context: str = "",
+) -> "tuple[float, dict]":
+    """
+    Evaluate whether the agent communicates data freshness limitations.
+
+    Many SQL agents query tables that are loaded on a schedule (hourly, daily, weekly
+    snapshots). If the user's question is time-sensitive, the agent should:
+    - Mention that data is as of a specific snapshot time
+    - Flag when the data may be stale for the question asked
+    - Indicate when near-real-time data is unavailable
+
+    Returns 1.0 when the question is clearly not time-sensitive.
+    Penalizes when the question is time-sensitive but the response gives no
+    freshness context.
+
+    Args:
+        question:       User question.
+        sql:            Generated SQL.
+        response:       Natural-language response.
+        llm_judge:      LLM judge function.
+        schema_context: Optional schema context mentioning data load times.
+    """
+    from sqlas.core import _parse_score as _ps, _retry_llm_judge as _rllm
+
+    if not response:
+        return 0.5, {"note": "no response to evaluate"}
+
+    # Fast check: does question have freshness-sensitive terms?
+    freshness_terms = [
+        r"\bcurrent\b", r"\bnow\b", r"\btoday\b", r"\breal.?time\b",
+        r"\bright\s+now\b", r"\blatest\b", r"\blive\b",
+        r"\bas\s+of\b", r"\bup.?to.?date\b",
+    ]
+    q_lower = question.lower()
+    time_sensitive = any(re.search(p, q_lower) for p in freshness_terms)
+
+    schema_block = f"\n**Schema/data context:**\n{schema_context[:600]}" if schema_context else ""
+
+    prompt = f"""You are evaluating whether an AI SQL agent appropriately communicates data freshness.
+
+**User Question:** {question}
+
+**Generated SQL:**
+```sql
+{sql}
+```
+
+**Agent's Response:**
+{response[:800]}
+{schema_block}
+
+Assess:
+1. Is the question time-sensitive (asks for current/live/latest data)?
+2. If time-sensitive, does the response mention when the data was last updated?
+3. Does the agent flag if the data might be stale for the question asked?
+4. For non-time-sensitive questions, freshness caveats are not required.
+
+Score 0.0-1.0:
+- 1.0: Question is not time-sensitive, OR agent properly communicates data freshness
+- 0.7: Agent hints at freshness but doesn't specify the snapshot time
+- 0.4: Time-sensitive question but agent gives no freshness context
+- 0.0: Agent confidently states "current" data when it's clearly from a stale snapshot
+
+Respond EXACTLY:
+Freshness_Score: [score]
+Time_Sensitive: [YES/NO]
+Reasoning: [one sentence]"""
+
+    try:
+        result = _rllm(llm_judge, prompt)
+    except Exception as e:
+        logger.warning("LLM judge failed in data_freshness_score: %s", e)
+        return (0.5 if time_sensitive else 1.0), {"error": str(e), "llm_error": True}
+
+    score, reasoning, parse_ok = _ps(result, "Freshness_Score")
+    time_sens_out = ""
+    for line in result.strip().split("\n"):
+        if line.startswith("Time_Sensitive:"):
+            time_sens_out = line.split(":", 1)[-1].strip()
+
+    details: dict = {
+        "reasoning": reasoning,
+        "time_sensitive_detected": time_sensitive,
+        "llm_time_sensitive": time_sens_out,
+    }
+    if not parse_ok:
+        details["llm_parse_warning"] = True
+    return score, details
 
 
 def execution_result(

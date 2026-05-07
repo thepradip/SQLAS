@@ -240,6 +240,74 @@ WEIGHTS_V4 = {
 }
 
 
+# ── Production Composite Weights (v5 — enterprise production) ────────────────
+# Extends v4 with the 15 new production-grade metrics:
+#   Authorization & Governance (10%), Intent & Explainability (8%),
+#   Query/Cost/Grain correctness (7%), Temporal/Null/Recovery (5%).
+# Core correctness reduced from 25% to 20% to accommodate enterprise signals.
+# ─────────────────────────────────────────────────────────────────────────────
+
+WEIGHTS_V5 = {
+    # 1. Execution Accuracy (17%)
+    "execution_accuracy": 0.17,
+    # 2. Semantic Correctness (8%)
+    "semantic_equivalence": 0.08,
+    # 3. Intent & Explainability (8%)
+    "intent_score": 0.05,
+    "result_explainability": 0.02,
+    "ambiguity_handling": 0.01,
+    # 4. Context Quality (6%)
+    "context_precision": 0.015,
+    "context_recall": 0.015,
+    "entity_recall": 0.015,
+    "noise_robustness": 0.015,
+    # 5. SQL Correctness (7%)
+    "dialect_correctness": 0.02,
+    "join_path_correctness": 0.03,
+    "aggregation_grain": 0.02,
+    # 6. Cost Efficiency (8%)
+    "efficiency_score": 0.02,
+    "data_scan_efficiency": 0.02,
+    "query_cost_score": 0.02,
+    "sql_quality": 0.01,
+    "schema_compliance": 0.01,
+    # 7. Temporal & Null Reasoning (5%)
+    "temporal_reasoning": 0.03,
+    "null_handling": 0.02,
+    # 8. Execution Quality (4%)
+    "execution_success": 0.02,
+    "complexity_match": 0.015,
+    "empty_result_penalty": 0.005,
+    # 9. Task Success (6%)
+    "faithfulness": 0.02,
+    "answer_relevance": 0.02,
+    "answer_completeness": 0.015,
+    "fluency": 0.005,
+    # 10. Result + Visualization (4%)
+    "result_set_similarity": 0.01,
+    "chart_spec_validity": 0.01,
+    "chart_data_alignment": 0.01,
+    "chart_llm_validation": 0.01,
+    # 11. Guardrails (8%)
+    "read_only_compliance": 0.015,
+    "sql_injection_score": 0.015,
+    "prompt_injection_score": 0.015,
+    "pii_access_score": 0.015,
+    "pii_leakage_score": 0.01,
+    "guardrail_score": 0.01,
+    # 12. Authorization & Governance (10%)
+    "authorization_compliance": 0.03,
+    "tenant_isolation": 0.03,
+    "business_rule_compliance": 0.02,
+    "exfiltration_risk": 0.02,
+    # 13. Cost & Freshness (3%)
+    "data_freshness": 0.02,
+    "error_recovery": 0.01,
+    # 14. Agentic Quality (6%)
+    "agentic_score": 0.06,
+}
+
+
 # ── v2.2.0: Three-dimension weight profiles ────────────────────────────────────
 
 WEIGHTS_CORRECTNESS = {
@@ -512,6 +580,35 @@ class SQLASScores:
     # Extra metrics (v2.7)
     exact_match_score: float = 0.0    # 1.0 if generated SQL exactly matches gold (normalized)
     hardness: str = ""                # auto-classified: easy|medium|hard|extra-hard
+
+    # ── v2.8.0: Production Enterprise Metrics ─────────────────────────────────
+
+    # Dialect & Join Correctness
+    dialect_correctness: float = 0.0        # syntax + semantic valid for target dialect
+    join_path_correctness: float = 0.0      # FK/expected join path validation
+    aggregation_grain: float = 0.0          # grain, DISTINCT, denominator correctness
+
+    # Temporal & Null Reasoning
+    temporal_reasoning: float = 0.0         # date/time expression translation quality
+    null_handling: float = 0.0              # NULL in filters, joins, aggregates
+
+    # Authorization & Governance
+    authorization_compliance: float = 0.0   # table/column/role access control
+    tenant_isolation: float = 0.0           # missing tenant_id/org_id filter detection
+    business_rule_compliance: float = 0.0   # domain-specific filter requirements
+    exfiltration_risk: float = 0.0          # k-anonymity / small-cell suppression
+
+    # Intent & Explainability
+    intent_score: float = 0.0               # business intent captured correctly
+    result_explainability: float = 0.0      # assumptions/caveats explained in response
+    ambiguity_handling: float = 0.0         # clarification vs silent assumption
+
+    # Cost & Freshness
+    query_cost_score: float = 0.0           # bytes scanned, partition pruning, index use
+    data_freshness: float = 0.0             # staleness/snapshot awareness in response
+
+    # Recovery
+    error_recovery: float = 0.0             # diagnosis quality and retry efficiency
 
     details: dict = field(default_factory=dict)
 

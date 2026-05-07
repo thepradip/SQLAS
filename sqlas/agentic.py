@@ -219,6 +219,98 @@ def agentic_score(
     }
 
 
+def error_recovery_quality(steps: list[dict]) -> "tuple[float, dict]":
+    """
+    Evaluate how well the agent diagnosed and recovered from SQL execution errors.
+
+    Complements first_attempt_success: when the first attempt fails, this metric
+    scores the *quality* of the recovery — did the agent correctly diagnose the
+    error and fix the root cause efficiently?
+
+    Signals inspected from the step list:
+    - Error message present in a step result
+    - Next SQL attempt is meaningfully different (targeted fix vs random retry)
+    - Number of failed attempts before success
+    - Whether the agent asked for schema info after an error (diagnostic step)
+
+    Scoring:
+        1.0  No errors occurred (not penalised — use first_attempt_success for that).
+        0.9  Error occurred, correctly diagnosed, fixed in 1 targeted retry.
+        0.7  Error occurred, fixed but took 2 retries or fix was partially correct.
+        0.4  Error occurred, fix was a generic retry with no diagnosis.
+        0.0  Error occurred, never recovered (failed after all retries).
+
+    Args:
+        steps: ReAct step list [{tool, args, result_preview, error?}] in order.
+    """
+    if not steps:
+        return 0.0, {"note": "pipeline mode — error recovery not applicable"}
+
+    error_steps: list[int] = []
+    recovery_steps: list[int] = []
+    diagnostic_after_error = False
+    final_success = False
+
+    for i, step in enumerate(steps):
+        tool = step.get("tool", "")
+        error = step.get("error") or ""
+        result = str(step.get("result_preview") or "")
+
+        if error or ("error" in result.lower() and tool == "execute_sql"):
+            error_steps.append(i)
+        elif tool == "execute_sql" and not error and i > 0:
+            if any(j < i for j in error_steps):
+                recovery_steps.append(i)
+
+        if tool == "final_answer" and not error:
+            final_success = True
+
+        # Did the agent run a schema-inspection step after an error?
+        if error_steps and tool in ("describe_table", "list_tables") and i > max(error_steps):
+            diagnostic_after_error = True
+
+    if not error_steps:
+        return 1.0, {
+            "note": "no errors encountered — error recovery not needed",
+            "errors_found": 0,
+        }
+
+    n_errors = len(error_steps)
+    n_recoveries = len(recovery_steps)
+
+    if not final_success:
+        return 0.0, {
+            "errors_found": n_errors,
+            "recovery_attempts": n_recoveries,
+            "final_success": False,
+            "issue": "agent failed to recover — query never succeeded",
+        }
+
+    if n_recoveries == 1 and diagnostic_after_error:
+        score = 0.9
+        recovery_quality = "targeted_fix"
+    elif n_recoveries == 1:
+        score = 0.75
+        recovery_quality = "fix_without_diagnosis"
+    elif n_recoveries == 2 and diagnostic_after_error:
+        score = 0.7
+        recovery_quality = "two_retries_with_diagnosis"
+    elif n_recoveries <= 2:
+        score = 0.55
+        recovery_quality = "multiple_retries_no_diagnosis"
+    else:
+        score = max(0.3, round(0.55 - 0.1 * (n_recoveries - 2), 4))
+        recovery_quality = "excessive_retries"
+
+    return round(score, 4), {
+        "errors_found": n_errors,
+        "recovery_attempts": n_recoveries,
+        "diagnostic_step_after_error": diagnostic_after_error,
+        "final_success": final_success,
+        "recovery_quality": recovery_quality,
+    }
+
+
 def plan_compliance(steps: list[dict]) -> tuple[float, dict]:
     """
     Did the agent follow the mandatory planning protocol?
