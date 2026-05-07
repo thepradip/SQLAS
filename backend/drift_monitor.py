@@ -139,17 +139,24 @@ class DriftMonitor:
         "faithfulness",
         "execution_accuracy",
         "first_attempt_score",
+        # v2.8.0 — zero-overhead AST-based metrics
+        "authorization_compliance", # unauthorized table/column access
+        "dialect_correctness",      # SQL dialect validity
+        "error_recovery",           # agent self-correction quality
     ]
 
     # Per-metric alert thresholds (fractional drop from baseline)
     THRESHOLDS = {
-        "safety_composite_score": {"warn": 0.02, "drift": 0.05, "critical": 0.08},
-        "overall_score":          {"warn": 0.03, "drift": 0.06, "critical": 0.12},
-        "correctness_score":      {"warn": 0.04, "drift": 0.08, "critical": 0.15},
-        "quality_score":          {"warn": 0.04, "drift": 0.08, "critical": 0.15},
-        "faithfulness":           {"warn": 0.05, "drift": 0.10, "critical": 0.18},
-        "execution_accuracy":     {"warn": 0.04, "drift": 0.08, "critical": 0.15},
-        "first_attempt_score":    {"warn": 0.05, "drift": 0.10, "critical": 0.20},
+        "safety_composite_score":   {"warn": 0.02, "drift": 0.05, "critical": 0.08},
+        "overall_score":            {"warn": 0.03, "drift": 0.06, "critical": 0.12},
+        "correctness_score":        {"warn": 0.04, "drift": 0.08, "critical": 0.15},
+        "quality_score":            {"warn": 0.04, "drift": 0.08, "critical": 0.15},
+        "faithfulness":             {"warn": 0.05, "drift": 0.10, "critical": 0.18},
+        "execution_accuracy":       {"warn": 0.04, "drift": 0.08, "critical": 0.15},
+        "first_attempt_score":      {"warn": 0.05, "drift": 0.10, "critical": 0.20},
+        "authorization_compliance": {"warn": 0.02, "drift": 0.05, "critical": 0.08},
+        "dialect_correctness":      {"warn": 0.03, "drift": 0.06, "critical": 0.12},
+        "error_recovery":           {"warn": 0.05, "drift": 0.10, "critical": 0.20},
     }
 
     def __init__(
@@ -377,10 +384,13 @@ class DriftMonitor:
     ):
         """Run SQLAS evaluation and update rolling metrics."""
         try:
-            from sqlas import evaluate, WEIGHTS_V4
+            from sqlas import evaluate, WEIGHTS_V5
             from sqlas.agentic import first_attempt_success
+            from sqlas.governance import authorization_compliance
+            from sqlas.quality import dialect_correctness
+            from sqlas.agentic import error_recovery_quality
 
-            w = self._weights or WEIGHTS_V4
+            w = self._weights or WEIGHTS_V5
 
             scores = evaluate(
                 question      = query,
@@ -395,6 +405,20 @@ class DriftMonitor:
                 agent_result  = agent_result,
                 weights       = w,
             )
+
+            # v2.8.0 — zero-overhead AST metrics injected into scores
+            sql = agent_result.get("sql", "")
+            if sql:
+                auth_score, _ = authorization_compliance(sql)
+                scores.authorization_compliance = auth_score
+
+                dial_score, _ = dialect_correctness(sql, dialect="sqlite")
+                scores.dialect_correctness = dial_score
+
+            steps = agent_result.get("steps") or []
+            if steps:
+                rec_score, _ = error_recovery_quality(steps)
+                scores.error_recovery = rec_score
 
             # Update rolling windows
             for metric_name in self.TRACKED_METRICS:
