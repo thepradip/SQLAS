@@ -1,3 +1,9 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -6,12 +12,42 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-*.whl
-*.tar.gz
-*.pdf
-.DS_Store
+venv/
+.venv/
 
-# React UI
+# Node / Vite
+node_modules/
+frontend/node_modules/
+frontend/dist/
 sqlas-ui/node_modules/
 sqlas-ui/dist/
 sqlas-ui/.vite/
+
+# Runtime artifacts
+*.db
+mlruns/
+backend/mlruns/
+frontend/mlflow.db
+backend/mlflow.db
+*.log
+
+# Archives and generated documents
+*.zip
+*.tar.gz
+*.whl
+*.pdf
+tmp/
+output/
+
+# Local duplicate/archive copies and one-off files
+SQL-AI-Agent-Pradip-Tivhale/
+sqlas-package/
+TestPyPI-Recovery-Codes-*.txt
+Case Study for Lateral Hiring*.docx
+frontend/=3.1.0
+
+# OS/editor
+.DS_Store
+
+# Claude Code local settings (keep local only)
+.claude/
