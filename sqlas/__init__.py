@@ -75,7 +75,7 @@ from sqlas.core import (
 )
 from sqlas.evaluate import generate_report
 
-__version__ = "2.7.0"
+__version__ = "2.8.0"
 __author__ = "SQLAS Contributors"
 
 __all__ = [
