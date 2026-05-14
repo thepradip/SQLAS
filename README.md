@@ -1,8 +1,16 @@
-# SQLAS — SQL Agent Scoring Framework
+# SQLAS — SQL Agent Evaluation Framework
 
-**A RAGAS-equivalent evaluation library for Text-to-SQL and Agentic SQL agents.**
+**The first standardised evaluation framework for SQL agents — correctness, quality, and safety in one verdict.**
 
 [![PyPI](https://img.shields.io/pypi/v/sqlas)](https://pypi.org/project/sqlas/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20180541.svg)](https://zenodo.org/records/20180541)
+
+## 📄 Paper
+**AriaSQL: Production SQL Agent for 100+ Table Databases with SQLAS Evaluation**
+**Author:** [thepradip](https://github.com/thepradip) · Published May 14, 2026
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20180541.svg)](https://zenodo.org/records/20180541) · [View Paper](https://zenodo.org/records/20180541) · [PDF](paper/AriaSQL_SQLAS_Draft_V3.pdf)
+
+---
 [![Python](https://img.shields.io/pypi/pyversions/sqlas)](https://pypi.org/project/sqlas/)
 [![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen)](https://github.com/thepradip/SQLAS)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
