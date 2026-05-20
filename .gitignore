@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+TestPyPI-Recovery-Codes*
 
 # Python
 __pycache__/
@@ -35,6 +36,7 @@ backend/mlflow.db
 *.zip
 *.tar.gz
 *.whl
+*.egg
 *.pdf
 tmp/
 output/
@@ -42,12 +44,15 @@ output/
 # Local duplicate/archive copies and one-off files
 SQL-AI-Agent-Pradip-Tivhale/
 sqlas-package/
-TestPyPI-Recovery-Codes-*.txt
 Case Study for Lateral Hiring*.docx
 frontend/=3.1.0
 
 # OS/editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
 
 # Claude Code local settings (keep local only)
 .claude/

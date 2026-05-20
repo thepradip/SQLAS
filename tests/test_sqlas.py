@@ -168,6 +168,26 @@ class TestVisualizationMetrics:
         )
         assert score == 1.0
 
+    def test_chart_alignment_accepts_service_aggregates(self):
+        score, details = chart_data_alignment(
+            {
+                "type": "bar",
+                "label_key": "Sex",
+                "value_key": "Sex_count",
+                "labels": ["Female", "Male"],
+                "values": [2.0, 2.0],
+                "records": [{"Sex": "Female", "Sex_count": 2.0}, {"Sex": "Male", "Sex_count": 2.0}],
+                "warnings": ["duplicate_labels_aggregated"],
+            },
+            {
+                "columns": ["Sex", "Patient_Number"],
+                "rows": [["Female", 252], ["Female", 1800], ["Male", 902], ["Male", 215]],
+                "row_count": 4,
+            },
+        )
+        assert score == 1.0
+        assert details["issues"] == ["none"]
+
     def test_visualization_score_without_llm(self):
         score, details = visualization_score(
             question="patients by sex",
